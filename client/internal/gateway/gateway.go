@@ -18,6 +18,7 @@ import (
 )
 
 type Gateway struct {
+	chatPhrases     map[string]string
 	ItemAssets      fs.FS
 	CopyAvatarImage ImageCopier
 	target          *url.URL
@@ -97,7 +98,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/client/world/status" && r.Method == http.MethodGet {
-		g.worldStatus(w)
+		g.worldStatus(w, r)
 		return
 	}
 	if r.URL.Path == "/client/runtime" && r.Method == "GET" {
@@ -105,8 +106,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/client/world/leave" && r.Method == http.MethodPost {
-		// Return to the picker without revoking any saved login or its cookie.
-		g.setWorldSession("")
+		// F5 keeps the bounded history for this Go-held session only.
+		// A normal return to the picker clears it without revoking the login.
+		g.changeWorldSession("", r.URL.Query().Get("reconnect") == "1")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

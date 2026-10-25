@@ -134,6 +134,8 @@ package {
             ExternalInterface.addCallback("getWorldPanelInfo", getWorldPanelInfo);
             ExternalInterface.addCallback("getRoomAudioInfo", getRoomAudioInfo);
             ExternalInterface.addCallback("getWorldMapInfo", getWorldMapInfo);
+            ExternalInterface.addCallback("addChatHistory", addChatHistory);
+            ExternalInterface.addCallback("getChatHistoryInfo", getChatHistoryInfo);
             ExternalInterface.addCallback("getChatMenuItems", getChatMenuItems);
             ExternalInterface.addCallback("setSocialState", setSocialState);
             ExternalInterface.addCallback("finishMuteChange", finishMuteChange);
@@ -146,6 +148,7 @@ package {
             ExternalInterface.addCallback("getProfileControlBounds", getProfileControlBounds);
             originalPreloader.contentLoaderInfo.addEventListener(Event.COMPLETE, loadOriginalLogin);
             originalPreloader.load(new URLRequest("/compat/OriginalPreloader.swf"));
+            preloadChatHistory();
             preloadWorldMap();
             preloadProfileIcons();
         }
@@ -1689,6 +1692,7 @@ package {
                 // background and send button at their authored positions.
                 field.y -= 3;
             }
+            updateChatHistory(controls as DisplayObjectContainer,field);
             // Formatting every frame resets the input's horizontal scrolling.
             // Only repair a direction change made by the original text manager.
             if (field.defaultTextFormat.align != TextFormatAlign.LEFT ||
@@ -1720,6 +1724,363 @@ package {
                 }
                 if (field.scrollH > chatContentScroll) field.scrollH = chatContentScroll;
             }
+        }
+
+        private var chatHistoryLoader:Loader;
+        private var chatHistoryDomain:ApplicationDomain;
+        private var chatHistoryPanel:MovieClip;
+        private var chatHistoryBody:DisplayObject;
+        private var chatHistoryButton:MovieClip;
+        private var chatHistoryHit:Sprite;
+        private var chatHistoryBar:DisplayObject;
+        private var chatHistoryMeasure:TextField;
+        private var chatHistoryFormat:TextFormat;
+        private var chatHistoryFields:Array = [];
+        private var chatHistoryLayout:Array = [];
+        private var chatHistoryRows:Array = [];
+        private var chatHistoryNames:Array = [];
+        private var chatHistoryTimes:Array = [];
+        private var chatHistoryContent:String = "";
+        private var chatHistoryAnchor:int = 0;
+        private var chatHistoryLatest:int = 0;
+        private var chatHistoryFollow:Boolean = true;
+        private var chatHistoryOpen:Boolean = false;
+        private var chatHistoryError:String = "";
+        private var chatHistoryFillAlpha:int = 0;
+        // Inner edges of original shape 294, translated by mcMessageHolder.
+        // Keep its 40% black fill and two-pixel green border unchanged.
+        private const historyTop:Number = -152.45;
+        private const historyBottom:Number = 0.3;
+        private const historyPadding:Number = 6;
+        private const historySlots:int = 8;
+        // Reserve the original font metrics and two-pixel top/bottom gutters.
+        // Fields may overlap in those empty gutters; their glyphs never do.
+        private const historyFieldHeight:Number = 21;
+        private const historyLineHeight:Number = (152.75-12-21)/7;
+
+        private function preloadChatHistory():void {
+            chatHistoryLoader = new Loader();
+            chatHistoryLoader.contentLoaderInfo.addEventListener(Event.COMPLETE,function(event:Event):void {
+                chatHistoryDomain = chatHistoryLoader.contentLoaderInfo.applicationDomain;
+            });
+            chatHistoryLoader.contentLoaderInfo.addEventListener(IOErrorEvent.IO_ERROR,function(event:IOErrorEvent):void { chatHistoryError = event.text; });
+            chatHistoryLoader.load(new URLRequest("/compat/ChatHistory.swf"),new LoaderContext(false,new ApplicationDomain()));
+        }
+
+        private function updateChatHistory(controls:DisplayObjectContainer, input:TextField):void {
+            if (chatHistoryDomain == null) return;
+            if (chatHistoryPanel == null) {
+                var cls:Class = chatHistoryDomain.getDefinition("MogobeOriginalChatHistory") as Class;
+                chatHistoryPanel = new cls() as MovieClip;
+                chatHistoryPanel.name = "mogobeChatHistory";
+                chatHistoryPanel.stop();
+                chatHistoryBody = findNamed(chatHistoryPanel,"mcMessageHolder",0);
+                var sample:BitmapData = new BitmapData(1,1,true,0);
+                sample.draw(chatHistoryBody,new Matrix(1,0,0,1,-100,-50));
+                chatHistoryFillAlpha = sample.getPixel32(0,0) >>> 24;
+                sample.dispose();
+                chatHistoryButton = findNamed(chatHistoryPanel,"btnPublicMessages",0) as MovieClip;
+                chatHistoryButton.x += 2.15; // Align the original arrow with the pane's centre.
+                chatHistoryButton.gotoAndStop(1);
+                chatHistoryHit = new Sprite();
+                chatHistoryHit.graphics.beginFill(0,0);
+                chatHistoryHit.graphics.drawRect(45,-7.75,56,14.1);
+                chatHistoryHit.graphics.endFill();
+                chatHistoryHit.visible = false;
+                chatHistoryButton.addChild(chatHistoryHit);
+                chatHistoryButton.hitArea = chatHistoryHit;
+                chatHistoryButton.buttonMode = true;
+                chatHistoryButton.mouseChildren = false;
+                chatHistoryButton.addEventListener(MouseEvent.CLICK,toggleChatHistory);
+                chatHistoryButton.addEventListener(MouseEvent.ROLL_OVER,historyButtonOver);
+                chatHistoryButton.addEventListener(MouseEvent.ROLL_OUT,historyButtonOut);
+                var fontClass:Class = ApplicationDomain.currentDomain.getDefinition("FontClass") as Class;
+                Object(fontClass).getInstance(); // Register the preserved Arial font.
+                chatHistoryFormat = input.defaultTextFormat;
+                chatHistoryFormat.font = Object(fontClass).FONT_ARIAL;
+                chatHistoryFormat.bold = false;
+                chatHistoryFormat.size = 12;
+                chatHistoryFormat.color = 0xffffff;
+                chatHistoryFormat.align = TextFormatAlign.LEFT;
+                chatHistoryFormat.leading = 0;
+                chatHistoryFormat.leftMargin = 0;
+                chatHistoryFormat.rightMargin = 0;
+                chatHistoryFormat.indent = 0;
+                chatHistoryMeasure = new TextField();
+                chatHistoryMeasure.embedFonts = true;
+                chatHistoryMeasure.defaultTextFormat = chatHistoryFormat;
+                chatHistoryMeasure.autoSize = TextFieldAutoSize.LEFT;
+                for (var i:int=0;i<historySlots;i++) {
+                    var field:TextField = new TextField();
+                    field.name = "txtChatHistoryLine"+i;
+                    field.embedFonts = true;
+                    field.antiAliasType = "advanced";
+                    field.defaultTextFormat = chatHistoryFormat;
+                    field.multiline = false;
+                    field.wordWrap = false;
+                    field.selectable = true;
+                    chatHistoryPanel.addChild(field);
+                    chatHistoryFields.push(field);
+                }
+                chatHistoryPanel.addEventListener(MouseEvent.MOUSE_WHEEL,scrollChatHistory);
+                chatHistoryPanel.addEventListener(MouseEvent.MOUSE_DOWN,historyMouseDown);
+                chatHistoryPanel.addEventListener(MouseEvent.CLICK,function(event:MouseEvent):void {event.stopPropagation();});
+                renderChatHistory(true);
+            }
+            if (chatHistoryPanel.parent != controls) controls.addChild(chatHistoryPanel);
+            // Shape 110 is the original RU bar artwork. Match the HE source's
+            // 0.15px offset from its top edge instead of floating above the input.
+            chatHistoryBar = controls.getChildAt(0);
+            var bar:Rectangle = chatHistoryBar.getBounds(controls);
+            var anchor:Point = controls.globalToLocal(localToGlobal(new Point(384,0)));
+            chatHistoryPanel.x = anchor.x-75.375;
+            chatHistoryPanel.y = bar.top+0.15;
+            // Preserve the source button's attachment to the pane's lower edge.
+            chatHistoryButton.y = -4.9;
+            chatHistoryBody.visible = chatHistoryOpen;
+            for each (var line:TextField in chatHistoryFields) line.visible = chatHistoryOpen && line.length > 0;
+        }
+
+        private function historyMouseDown(event:MouseEvent):void {
+            event.stopPropagation();
+        }
+
+        private function setHistoryButton(over:Boolean = false):void {
+            // UNCHECKED (17) removes the upper artwork and draws the lower
+            // button. CHEKED (13) retains the upper button; it is not "open".
+            chatHistoryButton.gotoAndStop(chatHistoryOpen ? 17 : (over ? 5 : 1));
+            chatHistoryButton.y = -4.9;
+            chatHistoryHit.graphics.clear();
+            chatHistoryHit.graphics.beginFill(0,0);
+            chatHistoryHit.graphics.drawRect(45,chatHistoryOpen ? 5.25 : -7.75,56,14.1);
+            chatHistoryHit.graphics.endFill();
+        }
+
+        private function historyButtonOver(event:MouseEvent):void {
+            setHistoryButton(true);
+        }
+
+        private function historyButtonOut(event:MouseEvent):void {
+            setHistoryButton(false);
+        }
+
+        private function toggleChatHistory(event:MouseEvent):void {
+            event.stopImmediatePropagation();
+            chatHistoryOpen = !chatHistoryOpen;
+            setHistoryButton(false);
+            chatHistoryBody.visible = chatHistoryOpen;
+            for each (var line:TextField in chatHistoryFields) line.visible = chatHistoryOpen && line.length > 0;
+        }
+
+        private function historySlot(slot:int):Rectangle {
+            var y:Number = historyTop+historyPadding+slot*historyLineHeight;
+            // The lower edge of a text line is the narrowest cross-section
+            // underneath it. Both sides retain six pixels inside the border.
+            var t:Number = (y+historyFieldHeight-historyTop)/(historyBottom-historyTop);
+            var left:Number = -64.1+14.95*t+historyPadding;
+            var right:Number = 214.85-13.1*t-historyPadding;
+            return new Rectangle(left,y,right-left,historyFieldHeight);
+        }
+
+        private function historyFits(text:String, width:Number):Boolean {
+            chatHistoryMeasure.text = text;
+            return chatHistoryMeasure.textWidth <= width-4;
+        }
+
+        private function historyNext(start:int, width:Number):Object {
+            var end:int = chatHistoryContent.indexOf("\n",start);
+            if (end < 0) end = chatHistoryContent.length;
+            var low:int = 0;
+            var high:int = end-start;
+            while (low < high) {
+                var mid:int = (low+high+1)/2;
+                if (historyFits(chatHistoryContent.substring(start,start+mid),width)) low=mid;
+                else high=mid-1;
+            }
+            var stop:int = start+Math.max(1,low);
+            if (start == end) stop = end;
+            if (stop < end) {
+                var space:int = chatHistoryContent.lastIndexOf(" ",stop);
+                if (space > start) stop = space;
+            }
+            var next:int = stop;
+            while (next < end && chatHistoryContent.charAt(next) == " ") next++;
+            if (next == end && next < chatHistoryContent.length) next++;
+            return {start:start,end:stop,next:next,text:chatHistoryContent.substring(start,stop)};
+        }
+
+        private function historyPrevious(end:int, width:Number):Object {
+            if (chatHistoryContent.charAt(end-1) == "\n")
+                return {start:end-1,end:end-1,next:end-1,text:""};
+            var begin:int = chatHistoryContent.lastIndexOf("\n",end-1)+1;
+            var low:int = 0;
+            var high:int = end-begin;
+            while (low < high) {
+                var mid:int = (low+high+1)/2;
+                if (historyFits(chatHistoryContent.substring(end-mid,end),width)) low=mid;
+                else high=mid-1;
+            }
+            var start:int = Math.max(begin,end-Math.max(1,low));
+            if (start > begin && chatHistoryContent.charAt(start-1) != " ") {
+                var space:int = chatHistoryContent.indexOf(" ",start);
+                if (space >= start && space < end) start=space+1;
+            }
+            var previous:int = start;
+            while (previous > begin && chatHistoryContent.charAt(previous-1) == " ") previous--;
+            if (previous == begin && previous > 0) previous--;
+            return {start:start,end:end,next:previous,text:chatHistoryContent.substring(start,end)};
+        }
+
+        private function scrollChatHistory(event:MouseEvent):void {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (!chatHistoryOpen || event.delta == 0) return;
+            var count:int = Math.max(1,Math.min(3,Math.abs(event.delta)));
+            var start:int = chatHistoryAnchor;
+            if (event.delta > 0) {
+                for (var i:int=0;i<count && start>0;i++) start=int(historyPrevious(start,historySlot(0).width).next);
+            } else if (chatHistoryLayout.length > 1) {
+                start=int(chatHistoryLayout[Math.min(count,chatHistoryLayout.length-1)].start);
+            }
+            chatHistoryAnchor=Math.max(0,Math.min(start,chatHistoryLatest));
+            renderChatHistory(chatHistoryAnchor >= chatHistoryLatest);
+        }
+
+        private function historyTime(row:Object):String {
+            var stamp:Number = Number(row.received_at);
+            if (isNaN(stamp) || stamp <= 0) return "";
+            var date:Date = new Date(stamp);
+            var hours:String = String(date.hours);
+            var minutes:String = String(date.minutes);
+            return "["+(hours.length < 2 ? "0" : "")+hours+":"+(minutes.length < 2 ? "0" : "")+minutes+"] ";
+        }
+
+        public function addChatHistory(rows:Array):void {
+            if (rows == null || rows.length == 0) return;
+            var follow:Boolean = chatHistoryFollow;
+            for each (var row:Object in rows) {
+                if (chatHistoryRows.length > 0 && Number(row.id) <= Number(chatHistoryRows[chatHistoryRows.length-1].id)) continue;
+                chatHistoryRows.push(row);
+            }
+            while (chatHistoryRows.length > 200) {
+                var removed:Object = chatHistoryRows.shift();
+                chatHistoryAnchor=Math.max(0,chatHistoryAnchor-(historyTime(removed).length+String(removed.sender).length+2+String(removed.text).length+1));
+            }
+            var parts:Array=[];
+            chatHistoryNames=[];
+            chatHistoryTimes=[];
+            var offset:int=0;
+            for each (row in chatHistoryRows) {
+                var clock:String=historyTime(row);
+                var text:String=clock+String(row.sender)+": "+String(row.text);
+                if (clock.length > 0) chatHistoryTimes.push({start:offset,end:offset+clock.length-1});
+                chatHistoryNames.push({start:offset+clock.length,end:offset+clock.length+String(row.sender).length+1});
+                offset+=text.length+1;
+                parts.push(text);
+            }
+            chatHistoryContent=parts.join("\n");
+            renderChatHistory(follow);
+        }
+
+        private function renderChatHistory(follow:Boolean):void {
+            if (chatHistoryMeasure == null) return;
+            var latest:Array=[];
+            var cursor:int=chatHistoryContent.length;
+            for (var i:int=historySlots-1;i>=0 && cursor>0;i--) {
+                var row:Object=historyPrevious(cursor,historySlot(i).width);
+                row.slot=i;
+                latest.unshift(row);
+                cursor=int(row.next);
+            }
+            chatHistoryLatest=latest.length==0 ? 0 : int(latest[0].start);
+            if (cursor == 0 && latest.length < historySlots) chatHistoryLatest=0;
+            chatHistoryFollow=follow;
+            if (follow) chatHistoryAnchor=chatHistoryLatest;
+            chatHistoryLayout=[];
+            if (follow && latest.length == historySlots) chatHistoryLayout=latest;
+            else {
+                cursor=chatHistoryAnchor;
+                for (i=0;i<historySlots && cursor<chatHistoryContent.length;i++) {
+                    row=historyNext(cursor,historySlot(i).width);
+                    row.slot=i;
+                    chatHistoryLayout.push(row);
+                    cursor=int(row.next);
+                }
+            }
+            for each (var field:TextField in chatHistoryFields) {field.text="";field.visible=false;}
+            for each (row in chatHistoryLayout) {
+                var bounds:Rectangle=historySlot(int(row.slot));
+                field=chatHistoryFields[int(row.slot)];
+                field.x=bounds.x;field.y=bounds.y;
+                field.width=bounds.width;field.height=bounds.height;
+                field.defaultTextFormat=chatHistoryFormat;
+                field.text=String(row.text);
+                field.visible=chatHistoryOpen && field.length > 0;
+                for each (var timeRange:Object in chatHistoryTimes) {
+                    var timeStart:int=Math.max(int(row.start),int(timeRange.start));
+                    var timeEnd:int=Math.min(int(row.end),int(timeRange.end));
+                    if (timeEnd > timeStart) {
+                        var timeFormat:TextFormat=new TextFormat();
+                        timeFormat.color=0xbfc8b8;
+                        field.setTextFormat(timeFormat,timeStart-int(row.start),timeEnd-int(row.start));
+                    }
+                }
+                for each (var name:Object in chatHistoryNames) {
+                    var begin:int=Math.max(int(row.start),int(name.start));
+                    var end:int=Math.min(int(row.end),int(name.end));
+                    if (end>begin) {
+                        var format:TextFormat=new TextFormat();
+                        format.color=0xd8efa7;
+                        field.setTextFormat(format,begin-int(row.start),end-int(row.start));
+                    }
+                }
+            }
+        }
+
+        private function historyRangeColor(field:TextField, row:Object, ranges:Array):uint {
+            for each (var range:Object in ranges) {
+                var begin:int=Math.max(int(row.start),int(range.start));
+                if (Math.min(int(row.end),int(range.end)) > begin)
+                    return uint(field.getTextFormat(begin-int(row.start),begin-int(row.start)+1).color);
+            }
+            return 0;
+        }
+
+        public function getChatHistoryInfo():Object {
+            var button:Rectangle = chatHistoryHit == null ? new Rectangle() : chatHistoryHit.getBounds(this);
+            var body:Rectangle = chatHistoryBody == null ? new Rectangle() : chatHistoryBody.getBounds(this);
+            var bar:Rectangle = chatHistoryBar == null ? new Rectangle() : chatHistoryBar.getBounds(this);
+            var upper:Boolean = false;
+            var lower:Boolean = false;
+            if (chatHistoryButton != null) for (var i:int=0;i<chatHistoryButton.numChildren;i++) {
+                var child:DisplayObject=chatHistoryButton.getChildAt(i);
+                if (!(child is Shape) || !child.visible) continue;
+                var art:Rectangle=child.getBounds(chatHistoryButton);
+                if (art.width > 55 && art.width < 57 && art.height > 12 && art.height < 14) {
+                    if (art.y < 0) upper=true;
+                    else lower=true;
+                }
+            }
+            var lines:Array=[];
+            for each (var row:Object in chatHistoryLayout) {
+                var field:TextField=chatHistoryFields[int(row.slot)];
+                var bounds:Rectangle=field.getBounds(this);
+                lines.push({text:field.text,x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,
+                    textWidth:field.textWidth,textHeight:field.textHeight,slot:row.slot,
+                    start:row.start,end:row.end,nameColor:historyRangeColor(field,row,chatHistoryNames),
+                    timeColor:historyRangeColor(field,row,chatHistoryTimes),
+                    color:field.text.length==0 ? 0 : field.getTextFormat(0,1).color});
+            }
+            return {ready:chatHistoryPanel != null,error:chatHistoryError,open:chatHistoryOpen,
+                count:chatHistoryRows.length,rows:chatHistoryRows,text:chatHistoryContent,
+                scroll:chatHistoryAnchor+1,maxScroll:chatHistoryLatest+1,lines:lines,
+                font:chatHistoryFormat == null ? "" : chatHistoryFormat.font,
+                embedded:chatHistoryMeasure != null && chatHistoryMeasure.embedFonts,
+                upperButtonVisible:upper,lowerButtonVisible:lower,
+                buttonFrame:chatHistoryButton == null ? 0 : chatHistoryButton.currentFrame,
+                bar:{x:bar.x,y:bar.y,width:bar.width,height:bar.height},
+                fillAlpha:chatHistoryFillAlpha,body:{x:body.x,y:body.y,width:body.width,height:body.height},
+                x:button.x,y:button.y,width:button.width,height:button.height};
         }
 
         private function chatTextX(field:TextField, index:int):Number {
@@ -1843,13 +2204,16 @@ package {
             var field:TextField = findNamed(chat, "txtSpeak", 0) as TextField;
             if (field == null) return;
             var command:String = field.text.replace(/^\s+|\s+$/g, "").toLowerCase();
-            if (command != "" && command != "/exit" && command != "/help") return;
+            var single:Boolean = command.length == 1;
+            if (command != "" && command != "/exit" && command != "/help" && !single) return;
+            var message:String = field.text.replace(/^\s+|\s+$/g, "");
             // The original ControlPanel treats an empty line as forbidden
             // text. Consume it before its Enter/button handler validates it.
             event.preventDefault();
             event.stopImmediatePropagation();
             field.text = "";
-            if (command != "") ExternalInterface.call("onMogobeChatCommand", command.substr(1));
+            if (single) ExternalInterface.call("onMogobePublicChat", message);
+            else if (command != "") ExternalInterface.call("onMogobeChatCommand", command.substr(1));
         }
 
         private function worldChatKey(event:KeyboardEvent):void {

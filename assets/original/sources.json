@@ -37520,5 +37520,17 @@
     "source": "user-provided archive/Movies/DukeMaze.mp3",
     "sha256": "5e2338dd4cfe1556f8dc42aec89f51c38e318bb9785e66be0068c48cfc02d18c",
     "modified": false
+  },
+  {
+    "path": "Swf/Preserved/ControlPanelIsrael.swf",
+    "source": "/mnt/g/Файлы Могоби/ControlPanel HE.swf",
+    "sha256": "9ddf901896cd4a661f3efdb0a2f0d2e1645b72f8f9bb1cf8f7662b9f9d8d4dbb",
+    "modified": false
+  },
+  {
+    "path": "Swf/Preserved/ControlPanelIsraelChat.swf",
+    "source": "/mnt/g/Файлы Могоби/He/MainFiles/ControlPanel[9].swf",
+    "sha256": "bf53887e66f184ee099b1c3fb2eba383b679ad119ddbe979b34a14cb4566e8e4",
+    "modified": false
   }
 ]

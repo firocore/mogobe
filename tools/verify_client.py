@@ -1,10 +1,12 @@
 """Run a selected native Windows check; default: one-account world smoke test."""
 import argparse
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 SUITES = {
+    "chat-layout": ("verify_chat.py", ["--layout"]),
+    "chat-history": ("verify_chat.py", ["--history"]),
     "chat-bubbles": ("verify_chat.py", ["--bubbles"]),
     "chat": ("verify_chat.py", []),
     "ui-regressions": ("verify_ui_regressions.py", []),

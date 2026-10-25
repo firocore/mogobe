@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Request, Response
 
 from src.auth.dependencies import CurrentAccount, Database, get_token
-from src.world import catalog, commands
+from src.world import catalog, chat, commands
 from src.world.presence import server_snapshot
+from src.world.schemas import ChatMessage
 
 router = APIRouter(prefix="/api/world", tags=["world"])
 
@@ -44,3 +45,9 @@ async def rooms(account: CurrentAccount):
 @router.get("/commands")
 async def command_help(account: CurrentAccount):
     return commands.available(account.is_admin)
+
+
+@router.post("/chat", status_code=204)
+async def public_chat(message: ChatMessage, account: CurrentAccount, request: Request):
+    await chat.send_message(request.app.state.world, account.id, get_token(request), message.text)
+    return Response(status_code=204)

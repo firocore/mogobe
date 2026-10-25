@@ -25,6 +25,10 @@ type worldNotice struct {
 }
 
 type worldSocket struct {
+	chatSession    string
+	chat           []chatMessage
+	chatSerial     uint64
+	chatUsers      map[int]string
 	notices        []worldNotice
 	mu             sync.Mutex
 	avatarID       int
@@ -44,9 +48,22 @@ type worldSocket struct {
 }
 
 func (g *Gateway) setWorldSession(token string) {
+	g.changeWorldSession(token, false)
+}
+
+func (g *Gateway) changeWorldSession(token string, preserveChat bool) {
 	g.world.mu.Lock()
 	defer g.world.mu.Unlock()
+	if !preserveChat && (token == "" || g.world.chatSession != token) {
+		g.world.chat = nil
+		g.world.chatSerial = 0
+		g.world.chatSession = ""
+	}
+	if token != "" {
+		g.world.chatSession = token
+	}
 	if g.world.token != token {
+		g.world.chatUsers = nil
 		for connection := range g.world.connections {
 			connection.Close()
 		}
@@ -88,16 +105,23 @@ func (g *Gateway) worldRuntime(w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(map[string]string{"socket_url": g.world.url})
 }
 
-func (g *Gateway) worldStatus(w http.ResponseWriter) {
+func (g *Gateway) worldStatus(w http.ResponseWriter, r *http.Request) {
+	after := chatCursor(r.URL.Query().Get("chat_after"))
 	g.world.mu.Lock()
 	message, revision := g.world.error, g.world.socialRevision
+	chat := make([]chatMessage, 0)
+	for _, row := range g.world.chat {
+		if row.ID > after {
+			chat = append(chat, row)
+		}
+	}
 	notices := g.world.notices
 	g.world.notices = nil
 	shopRevision, shopSerial, shopKey := g.world.shopRevision, g.world.shopSerial, g.world.shopKey
 	minigameSerial, minigameKey := g.world.minigameSerial, g.world.minigameKey
 	g.world.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"minigame_serial": minigameSerial, "minigame_key": minigameKey, "notices": notices, "error": message, "social_revision": revision, "shop_revision": shopRevision, "shop_serial": shopSerial, "shop_key": shopKey})
+	json.NewEncoder(w).Encode(map[string]any{"chat": chat, "minigame_serial": minigameSerial, "minigame_key": minigameKey, "notices": notices, "error": message, "social_revision": revision, "shop_revision": shopRevision, "shop_serial": shopSerial, "shop_key": shopKey})
 }
 
 // Social changes already arrive on the game connection. Expose a local
@@ -237,6 +261,7 @@ func (g *Gateway) serveWorldSocket(w http.ResponseWriter, r *http.Request) {
 					if end < 0 {
 						break
 					}
+					g.observeChatPacket(token, generation, observed[:end])
 					g.observeSocialPacket(token, generation, observed[:end])
 					g.observeOutfitPacket(token, generation, observed[:end])
 					observed = observed[end+1:]

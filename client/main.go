@@ -35,6 +35,14 @@ func main() {
 	assets, _ := fs.Sub(web, "frontend")
 	proxy := gateway.New(cfg.ServerURL, time.Duration(cfg.RequestTimeoutSeconds)*time.Second)
 	proxy.ItemAssets, _ = fs.Sub(assets, "items")
+	phrases, err := assets.Open("Xmls/lang/chat_5.xml")
+	if err != nil {
+		fatal("Не удалось прочитать оригинальные фразы чата.", err)
+	}
+	if err = proxy.LoadChatPhrases(phrases); err != nil {
+		fatal("Не удалось прочитать оригинальные фразы чата.", err)
+	}
+	phrases.Close()
 	profileRoot, _ := os.UserCacheDir()
 	if root := uiTestDataDir(); root != "" {
 		profileRoot = root

@@ -180,10 +180,11 @@ window.onTrackEvent = async (category,action) => {
   } catch(error) { signedIn = false; showNotice(error.message); }
 };
 const pendingWorldAlerts=[];
+let lastChatID=0;
 async function watchWorld() {
   while(signedIn && !leavingWorld) {
     try {
-      const status = await (await fetch('/client/world/status',{cache:'no-store'})).json();
+      const status = await (await fetch('/client/world/status?chat_after='+lastChatID,{cache:'no-store'})).json();
       if(status.error) {
         leavingWorld = true;
         sessionStorage.setItem('mogobe.worldError',status.error);
@@ -191,6 +192,10 @@ async function watchWorld() {
         window.player?.remove();
         location.assign('/');
         return;
+      }
+      if(status.chat?.length) {
+        window.player.ruffle().callExternalInterface('addChatHistory',status.chat);
+        lastChatID=status.chat.at(-1).id;
       }
       pendingWorldAlerts.push(...(status.notices??[]));
       if(['world','minigame'].includes(window.mogobeScene?.state)) {
@@ -271,7 +276,7 @@ window.onMogobeReconnect = () => {
       await Promise.allSettled([...muteChains.values()]);
       const prepared = await fetch('/api/world/reconnect',{method:'POST'});
       if(!prepared.ok) throw new Error('Не удалось подготовить переподключение в текущую локацию.');
-      const response = await fetch('/client/world/leave',{method:'POST'});
+      const response = await fetch('/client/world/leave?reconnect=1',{method:'POST'});
       if(!response.ok) throw new Error('Не удалось закрыть прежнее игровое соединение.');
       const deadline = Date.now()+10000;
       while(Date.now()<deadline) {
@@ -298,6 +303,15 @@ document.addEventListener('keydown',event=>{
   event.stopImmediatePropagation();
   window.onMogobeReconnect();
 },true);
+
+window.onMogobePublicChat = text => {
+  setTimeout(async()=>{
+    try {
+      const response=await fetch('/api/world/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+      if(!response.ok) throw new Error('Не удалось отправить сообщение.');
+    } catch(error) { showMogobePopup(error.message); }
+  },0);
+};
 
 window.onMogobeChatCommand = command => {
   if(command === 'help') {

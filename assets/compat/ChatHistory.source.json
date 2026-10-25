@@ -1,0 +1,31 @@
+{
+  "original_game_asset": false,
+  "original_graphics": true,
+  "source": "assets/original/Swf/Preserved/ControlPanelIsraelChat.swf",
+  "source_sha256": "bf53887e66f184ee099b1c3fb2eba383b679ad119ddbe979b34a14cb4566e8e4",
+  "source_archive": "He/MainFiles/ControlPanel[9].swf",
+  "panel_symbol": 302,
+  "panel_geometry": {
+    "top_left": [
+      -64.1,
+      -152.45
+    ],
+    "top_right": [
+      214.85,
+      -152.45
+    ],
+    "bottom_left": [
+      -49.15,
+      0.3
+    ],
+    "bottom_right": [
+      201.75,
+      0.3
+    ],
+    "fill": "#000000",
+    "fill_alpha": 0.4
+  },
+  "class": "MogobeOriginalChatHistory",
+  "generator": "tools/build_chat_history.py",
+  "sha256": "d173c7eb5d867b6e17d3e0d66990aac6f72e33fb20e3c9f4e3158228d0eeea4b"
+}

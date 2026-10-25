@@ -5,7 +5,7 @@
   },
   {
     "path": "sources.json",
-    "sha256": "974ee95d61e467ccde7b929f7fa19cfbc13e3143a5be2246eb00b48714b85c54"
+    "sha256": "d82930886638a1205bf29c5eabffd9f314710e13b1704368199fa66ae3093001"
   },
   {
     "path": "telegram-games-import.json",
@@ -262,6 +262,14 @@
   {
     "path": "Swf/Games/TrickyCups.swf",
     "sha256": "d66f003d3bbfe522cc238287a9fdb9bd78d23bfe6e940792f919e7d78f6f0dd6"
+  },
+  {
+    "path": "Swf/Preserved/ControlPanelIsrael.swf",
+    "sha256": "9ddf901896cd4a661f3efdb0a2f0d2e1645b72f8f9bb1cf8f7662b9f9d8d4dbb"
+  },
+  {
+    "path": "Swf/Preserved/ControlPanelIsraelChat.swf",
+    "sha256": "bf53887e66f184ee099b1c3fb2eba383b679ad119ddbe979b34a14cb4566e8e4"
   },
   {
     "path": "Swf/Rooms/Africa.swf",

@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -103,14 +104,259 @@ def check_bubbles(c,result,peer_token,peer_id,scope):
     result['checks']['remote_240_character_unbroken_speech_fits_and_expires']=True
 
 
+def check_chat_layout(c,result,scope):
+    EI="window.player.ruffle().callExternalInterface"
+    HISTORY=EI+"('getChatHistoryInfo')"
+    PANEL=EI+"('getWorldPanelInfo')"
+
+    def inspect():
+        info=c.js(HISTORY)
+        body,bar=info['body'],info['bar']
+        assert abs(body['x']+body['width']/2-384)<.2,info
+        assert 0<=body['y']+body['height']-bar['y']<=2,info
+        assert '\n\n' not in info['text'],info
+        if info['open']:
+            assert info['lowerButtonVisible'] and not info['upperButtonVisible'],info
+            assert info['buttonFrame']==17,info
+            assert abs(info['y']-(body['y']+body['height']))<1.5,info
+            assert 0<info['y']+info['height']-c.js(PANEL)['y']<6,info
+        else:
+            assert info['upperButtonVisible'] and not info['lowerButtonVisible'],info
+            assert info['buttonFrame'] in [1,5],info
+        return info
+
+    def toggle():
+        info=c.js(HISTORY)
+        x,y=info['x']+info['width']/2,info['y']+info['height']/2
+        frame=c.js("(()=>{if(document.fullscreenElement!==window.player)return null;const e=player.shadowRoot.querySelector('#container'),r=e.getBoundingClientRect(),b=parseFloat(getComputedStyle(e).borderLeftWidth);return {x:r.x+b,y:r.y+b,width:r.width-2*b,height:r.height-2*b}})()")
+        if frame:c.click(frame['x']+x*frame['width']/768,frame['y']+y*frame['height']/480)
+        else:c.stage_click(x,y)
+        c.wait(HISTORY+'.open==='+str(not info['open']).lower())
+        return inspect()
+
+    def leave_button():
+        stage=c.js("document.getElementById('stage').getBoundingClientRect().toJSON()")
+        c.call('Input.dispatchMouseEvent',type='mouseMoved',x=stage['x']+20*stage['width']/768,y=stage['y']+20*stage['height']/480)
+        time.sleep(.15)
+        return inspect()
+
+    info=inspect()
+    assert len(info['lines'])==4 and all(row['text'] for row in info['lines']),info
+    for row,line in zip(info['rows'],info['lines']):
+        stamp=row['received_at']
+        local=time.localtime(stamp/1000)
+        expected=time.strftime('[%H:%M]',local)+' '+row['sender']+': '+row['text']
+        assert line['text']==expected,line
+        assert re.match(r'^\[\d{2}:\d{2}\] ',line['text']),line
+        assert line['timeColor']==0xbfc8b8 and line['nameColor']==0xd8efa7,line
+    result['checks']['receive_times_use_local_hh_mm_and_separate_time_and_name_colours']=True
+    assert all(0<info['lines'][i+1]['y']-info['lines'][i]['y']<18 for i in range(3)),info
+    result['checks']['short_messages_have_compact_spacing_without_empty_rows']=True
+    c.capture(scope+'/04-open-docked-history')
+    for _ in range(3):
+        opened=leave_button()
+        closed=toggle()
+        assert opened['y']>closed['y']+5,(opened,closed)
+        leave_button()
+        toggle()
+    result['checks']['original_upper_and_lower_buttons_alternate_and_stay_correct_after_hover']=True
+    toggle();c.capture(scope+'/05-upper-button-when-closed');toggle()
+    result['checks']['history_joins_bar_and_lower_button_attaches_to_pane_edge']=True
+    for i in range(5):
+        text='Сообщение '+str(i)+': '+('проверка переноса текста в истории. '*5)
+        before=c.js(HISTORY)['count']
+        c.control('txtSpeak');c.type_text(text)
+        c.wait(PANEL+'.text==='+json.dumps(text))
+        c.control('btnSend')
+        c.wait(HISTORY+'.count==='+str(before+1))
+        time.sleep(.6)
+    info=inspect()
+    assert len(info['lines'])==8 and info['lines'][-1]['end']==len(info['text']),info
+    for line in info['lines']:
+        assert line['text'] and line['textWidth']<=line['width']-3.5,line
+        assert line['textHeight']+3.5<=line['height'],line
+        assert line['text']==info['text'][line['start']:line['end']],line
+    c.capture(scope+'/06-compact-wrapped-history')
+    stage=c.js("document.getElementById('stage').getBoundingClientRect().toJSON()")
+    c.call('Input.dispatchMouseEvent',type='mouseMoved',x=stage['x']+384*stage['width']/768,y=stage['y']+350*stage['height']/480)
+    c.call('Input.dispatchMouseEvent',type='mouseWheel',x=stage['x']+384*stage['width']/768,y=stage['y']+350*stage['height']/480,deltaX=0,deltaY=-500)
+    c.wait(HISTORY+'.scroll<'+HISTORY+'.maxScroll')
+    saved=c.js(HISTORY)['scroll']
+    c.control('txtSpeak');c.type_text('Новое сообщение при чтении истории')
+    c.wait(PANEL+".text==='Новое сообщение при чтении истории'")
+    c.control('btnSend')
+    c.wait(HISTORY+".rows.at(-1).text==='Новое сообщение при чтении истории'")
+    assert c.js(HISTORY)['scroll']==saved
+    inspect()
+    result['checks']['compact_wrapping_scrolling_and_reading_position_preserved']=True
+    response=c.call('Runtime.evaluate',expression="Element.prototype.requestFullscreen.call(window.player)",awaitPromise=True,userGesture=True,returnByValue=True)
+    assert 'exceptionDetails' not in response,response
+    c.wait('document.fullscreenElement===window.player')
+    inspect();c.capture(scope+'/07-docked-history-fullscreen')
+    toggle();leave_button();toggle();inspect()
+    c.js('document.exitFullscreen()');c.wait('document.fullscreenElement===null')
+    inspect()
+    result['checks']['docking_and_button_visibility_preserved_in_fullscreen']=True
+    retained=c.js(HISTORY)['rows']
+    c.js('window.chatTimeGeneration=true;window.onMogobeReconnect()')
+    c.wait("window.chatTimeGeneration===undefined && window.mogobeScene?.state==='world'",60)
+    c.wait(HISTORY+'.count==='+str(len(retained)),30)
+    assert c.js(HISTORY)['rows']==retained
+    info=c.js(HISTORY)
+    last=retained[-1]
+    expected=time.strftime('[%H:%M]',time.localtime(last['received_at']/1000))+' '+last['sender']+': '+last['text']
+    assert info['text'].endswith(expected),info
+    result['checks']['receive_times_survive_f5_without_being_recreated']=True
+
+
+def check_history(c,result,peer_token,peer_id,scope):
+    from websockets.sync.client import connect
+    EI="window.player.ruffle().callExternalInterface"
+    HISTORY=EI+"('getChatHistoryInfo')"
+    AVATARS=EI+"('getWorldAvatars')"
+
+    def geometry():
+        info=c.js(HISTORY)
+        body=info['body']
+        assert abs(body['x']+body['width']/2-384)<.2,info
+        assert 95<=info['fillAlpha']<=110,info
+        assert info['embedded'] and info['font']=='Arial',info
+        content=info['text']
+        for line in info['lines']:
+            t=(line['y']+line['height']-(body['y']+1))/152.75
+            left=body['x']+1+14.95*t
+            right=body['x']+body['width']-1-13.1*t
+            assert line['x']>=left+5 and line['x']+line['width']<=right-5,line
+            assert line['textWidth']<=line['width']-3.5,line
+            if line['text']:
+                assert line['textWidth']>0 and line['textHeight']>0,line
+                assert line['textHeight']+3.5<=line['height'],line
+            assert line['text']==content[line['start']:line['end']],line
+        return info
+
+    def toggle():
+        info=c.js(HISTORY)
+        c.stage_click(info['x']+info['width']/2,info['y']+info['height']/2)
+
+    # Leave the original quick-phrase menu functional beside the new toggle.
+    toggle();c.wait('!'+HISTORY+'.open')
+    c.control('btnCloseChat')
+    menu=EI+"('getChatMenuItems')"
+    for text in ['Приветствия','Привет!']:
+        c.wait(menu+'.some(v=>v.text==='+json.dumps(text)+')')
+        box=c.js(menu+'.find(v=>v.text==='+json.dumps(text)+')')
+        if text=='Приветствия':
+            stage=c.js("document.getElementById('stage').getBoundingClientRect().toJSON()")
+            c.call('Input.dispatchMouseEvent',type='mouseMoved',x=stage['x']+(box['x']+box['width']/2)*stage['width']/768,y=stage['y']+(box['y']+box['height']/2)*stage['height']/480)
+        else:c.stage_click(box['x']+box['width']/2,box['y']+box['height']/2)
+    c.wait(HISTORY+".rows.some(r=>r.text==='Привет!')")
+    result['checks']['original_quick_phrase_is_recorded_as_text']=True
+
+    with connect('ws://127.0.0.1:18080/legacy/socket',additional_headers={'Authorization':'Bearer '+peer_token}) as peer:
+        def send(text):peer.send(text.encode()+b'\0')
+        def receive():return peer.recv(timeout=15).decode().removesuffix('\0')
+        def speak(text,action='speak'):
+            from xml.sax.saxutils import escape
+            send('<msg t="sys"><body action="pubMsg"><txt>'+action+'__'+escape(text)+'</txt></body></msg>')
+            for _ in range(40):
+                packet=receive()
+                if 'action="pubMsg"' in packet:break
+            time.sleep(.55)
+        send('<msg t="sys"><body action="verChk"/></msg>');receive()
+        send('<msg t="sys"><body action="login"><login><nick>ChatPeer</nick><pword>__MOGOBE_CURRENT_SESSION__</pword></login></body></msg>')
+        receive();receive()
+        send(json.dumps({'t':'xt','b':{'c':'user__joinFirstRoom','p':{}}}))
+        for _ in range(30):
+            if 'action="joinOK"' in receive():break
+        c.wait(AVATARS+'.some(v=>v.id==='+str(peer_id)+')')
+        literal='<b> & Привет!'
+        speak(literal);speak(literal)
+        c.wait(HISTORY+'.rows.filter(r=>r.text==='+json.dumps(literal)+').length===2')
+        assert c.js(HISTORY)['rows'][-1]['sender']=='ChatPeer'
+        result['checks']['remote_names_literal_text_and_repeated_messages_preserved']=True
+        before=c.js(HISTORY)['count']
+        speak('Ico_wink','emoticons')
+        time.sleep(.7)
+        assert c.js(HISTORY)['count']==before
+        result['checks']['emotions_are_not_added_as_chat_text']=True
+        for i in range(14):speak('Запись '+str(i)+': '+('Длинный текст для проверки переноса строк. '*4))
+        c.wait(HISTORY+'.count==='+str(before+14))
+        toggle();c.wait(HISTORY+'.open && '+HISTORY+'.maxScroll>1')
+        c.wait(HISTORY+'.scroll==='+HISTORY+'.maxScroll')
+        info=geometry()
+        assert len(info['lines'])==8 and info['lines'][0]['slot']==0 and info['lines'][-1]['slot']==7,info
+        assert info['lines'][0]['width']>info['lines'][-1]['width']+15,info
+        assert info['body']['y']+info['body']['height']-(info['lines'][-1]['y']+info['lines'][-1]['height'])<9,info
+        assert '\n\n' not in info['text'],info
+        assert all(row['text'] for row in info['lines']),info
+        assert any(row['nameColor']==0xd8efa7 for row in info['lines']),info
+        result['history_geometry']=info
+        result['checks']['history_centred_translucent_and_text_fills_tapered_panel']=True
+        c.capture(scope+'/04-original-history-with-two-players')
+        response=c.call('Runtime.evaluate',expression="Element.prototype.requestFullscreen.call(window.player)",awaitPromise=True,userGesture=True,returnByValue=True)
+        assert 'exceptionDetails' not in response,response
+        c.wait('document.fullscreenElement===window.player')
+        geometry()
+        c.capture(scope+'/04b-centred-history-fullscreen')
+        c.js('document.exitFullscreen()')
+        c.wait('document.fullscreenElement===null')
+        result['checks']['history_keeps_centre_and_contour_in_fullscreen']=True
+        stage=c.js("document.getElementById('stage').getBoundingClientRect().toJSON()")
+        def wheel(delta):
+            c.call('Input.dispatchMouseEvent',type='mouseWheel',x=stage['x']+384*stage['width']/768,y=stage['y']+350*stage['height']/480,deltaX=0,deltaY=delta)
+        wheel(-500)
+        c.wait(HISTORY+'.scroll<'+HISTORY+'.maxScroll')
+        geometry()
+        saved=c.js(HISTORY)['scroll']
+        speak('После прокрутки')
+        c.wait(HISTORY+".rows.some(r=>r.text==='После прокрутки')")
+        assert c.js(HISTORY)['scroll']==saved
+        geometry()
+        c.capture(scope+'/05-history-scrolled-up')
+        result['checks']['history_wraps_scrolls_and_does_not_jump_during_reading']=True
+        unbroken='Ш'*240
+        speak(unbroken)
+        c.wait(HISTORY+'.rows.some(r=>r.text==='+json.dumps(unbroken)+')')
+        for _ in range(12):
+            wheel(500)
+            if c.js(HISTORY+'.scroll==='+HISTORY+'.maxScroll'):break
+        c.wait(HISTORY+'.scroll==='+HISTORY+'.maxScroll')
+        info=geometry()
+        assert info['lines'][-1]['end']==len(info['text']),info
+        assert all(row['text'] and set(row['text'])=={'Ш'} for row in info['lines']),info
+        c.capture(scope+'/05b-unbroken-text-inside-contour')
+        result['checks']['unbroken_240_character_message_fits_without_clipping_last_line']=True
+        response=c.js("fetch('/api/social/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'ChatPeer',muted:true})}).then(r=>r.status)")
+        assert response==200,response
+        before=c.js(HISTORY)['count']
+        speak('Скрытое сообщение')
+        time.sleep(1)
+        assert c.js(HISTORY)['count']==before
+        assert 'Скрытое сообщение' not in c.js(HISTORY)['text']
+        result['checks']['muted_speech_does_not_enter_history']=True
+    retained=c.js(HISTORY)['rows']
+    c.chat_send('/room infoboard')
+    c.wait("window.mogobeScene?.state==='world' && window.mogobeScene?.room==='infoboard'",40)
+    c.wait(HISTORY+'.ready')
+    assert c.js(HISTORY)['rows']==retained
+    c.js('window.chatHistoryGeneration=true;window.onMogobeReconnect()')
+    c.wait("window.chatHistoryGeneration===undefined && window.mogobeScene?.state==='world' && window.mogobeScene?.room==='infoboard'",60)
+    c.wait(HISTORY+'.count==='+str(len(retained)),30)
+    assert c.js(HISTORY)['rows']==retained
+    c.capture(scope+'/06-history-after-reconnect')
+    result['checks']['history_survives_room_change_and_f5']=True
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bubbles',action='store_true',help='Also verify adaptive speech and another avatar')
+    parser.add_argument('--history',action='store_true',help='Verify original chat history with another player')
+    parser.add_argument('--layout',action='store_true',help='One-account compact history, docking and original buttons')
     args=parser.parse_args()
-    scope='chat-bubbles' if args.bubbles else 'chat'
+    scope='chat-layout' if args.layout else 'chat-history' if args.history else 'chat-bubbles' if args.bubbles else 'chat'
     out=ROOT/'verification'/scope
     out.mkdir(parents=True,exist_ok=True)
-    result={'suite':scope,'account_count':2 if args.bubbles else 1,'checks':{}}
+    result={'suite':scope,'account_count':2 if args.bubbles or args.history else 1,'checks':{}}
     processes=[]
     bridge=None
     with tempfile.TemporaryDirectory(prefix='mogobe-chat-',ignore_cleanup_errors=True) as temporary:
@@ -130,7 +376,7 @@ def main():
                 with httpx.Client(base_url='http://127.0.0.1:18080') as api:
                     assert api.post('/api/auth/registration-drafts',json={'username':'ChatNative','password':'Fish1234','color_id':7}).status_code==201
                     assert api.post('/api/auth/register',json={'age':12,'chat_mode':'open'}).status_code==201
-                    if args.bubbles:
+                    if args.bubbles or args.history:
                         with httpx.Client(base_url='http://127.0.0.1:18080') as peer_api:
                             assert peer_api.post('/api/auth/registration-drafts',json={'username':'ChatPeer','password':'Fish1234','color_id':3}).status_code==201
                             response=peer_api.post('/api/auth/register',json={'age':12,'chat_mode':'open'})
@@ -224,7 +470,7 @@ def main():
                 result['checks']['empty_and_spaces_are_ignored_for_button_and_enter_without_popup_or_packet']=True
                 c.capture(scope+'/03-after-empty-sends')
 
-                for message,method in [('Привет, могоби!','button'),('Сообщение через Enter','enter')]:
+                for message,method in [('Привет, могоби!','button'),('Сообщение через Enter','enter'),('Я','button'),('?','enter')]:
                     c.control('txtSpeak');c.type_text(message)
                     c.wait(PANEL+'.text==='+json.dumps(message))
                     if method=='button':c.control('btnSend')
@@ -234,6 +480,17 @@ def main():
                     time.sleep(.6)
                 assert c.js('window.publicChatPackets')==before+2
                 result['checks']['real_messages_still_send_with_both_controls']=True
+                result['checks']['single_character_messages_send_with_both_controls']=True
+                HISTORY=EI+"('getChatHistoryInfo')"
+                c.wait(HISTORY+'.ready && '+HISTORY+'.count===4')
+                info=c.js(HISTORY)
+                assert [r['text'] for r in info['rows']][-2:]==['Я','?'],info
+                c.stage_click(info['x']+info['width']/2,info['y']+info['height']/2)
+                c.wait(HISTORY+'.open')
+                c.capture(scope+'/03b-original-history-panel')
+                result['checks']['original_history_displays_own_single_character_messages']=True
+                if args.layout:check_chat_layout(c,result,scope)
+                if args.history:check_history(c,result,peer_token,peer_id,scope)
                 if args.bubbles:check_bubbles(c,result,peer_token,peer_id,scope)
                 c.chat_send('/help')
                 c.wait("window.mogobePopup?.state==='open' && window.mogobePopup.original===true")
@@ -246,6 +503,7 @@ def main():
                 result['error']=traceback.format_exc()
                 if bridge:
                     try:
+                        result['history']=bridge.js("window.player?.ruffle().callExternalInterface('getChatHistoryInfo')")
                         result['state']=bridge.js("JSON.stringify({scene:window.mogobeScene,panel:window.player?.ruffle().callExternalInterface('getWorldPanelInfo'),avatars:window.player?.ruffle().callExternalInterface('getWorldAvatars'),originalPopup:window.player?.ruffle().callExternalInterface('getSocialPopupInfo'),popup:window.mogobePopup,publicChatPackets:window.publicChatPackets})")
                         bridge.capture(scope+'/failure')
                     except Exception:pass
