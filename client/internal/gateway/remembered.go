@@ -140,6 +140,10 @@ func (g *Gateway) rememberedLogin(w http.ResponseWriter, r *http.Request) {
 		fail("6", "")
 		return
 	}
+	if g.openAdminLoginJoke(username, password) {
+		fail("2", "")
+		return
+	}
 	currentSession := password == currentSessionMarker
 	resuming := password == accounts.SavedSessionMarker || currentSession
 	var previous string

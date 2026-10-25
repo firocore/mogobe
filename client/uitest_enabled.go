@@ -25,7 +25,13 @@ func configureUITest(opts *options.App) {
 	var ctx context.Context
 	var lock sync.Mutex
 	results := make(chan json.RawMessage, 1)
-	opts.OnStartup = func(value context.Context) { ctx = value }
+	previousStartup := opts.OnStartup
+	opts.OnStartup = func(value context.Context) {
+		ctx = value
+		if previousStartup != nil {
+			previousStartup(value)
+		}
+	}
 	ready := make(chan struct{})
 	var once sync.Once
 	opts.OnDomReady = func(_ context.Context) { once.Do(func() { close(ready) }) }

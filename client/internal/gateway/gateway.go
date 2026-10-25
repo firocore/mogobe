@@ -21,6 +21,7 @@ type Gateway struct {
 	chatPhrases     map[string]string
 	ItemAssets      fs.FS
 	CopyAvatarImage ImageCopier
+	OpenLoginJoke   func()
 	target          *url.URL
 	client          *http.Client
 	Accounts        *accounts.Store
@@ -150,6 +151,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if user == "" || password == "" || len(user) > 256 || len(password) > 512 {
 			w.Header().Set("Content-Type", "application/xml")
 			io.WriteString(w, `<Response><Login status="6"/></Response>`)
+			return
+		}
+		if g.openAdminLoginJoke(user, password) {
+			w.Header().Set("Content-Type", "application/xml")
+			io.WriteString(w, `<Response><Login status="2"/></Response>`)
 			return
 		}
 		encoded, _ := json.Marshal(map[string]string{"username": user, "password": password})

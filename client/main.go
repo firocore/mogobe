@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"embed"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend
@@ -79,6 +81,11 @@ func main() {
 		return
 	}
 	opts := &options.App{
+		OnStartup: func(ctx context.Context) {
+			proxy.OpenLoginJoke = func() {
+				runtime.BrowserOpenURL(ctx, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+			}
+		},
 		Title: "Могоби", Width: 1000, Height: 720, MinWidth: 900, MinHeight: 640,
 		BackgroundColour: &options.RGBA{R: 166, G: 205, B: 10, A: 255},
 		AssetServer:      &assetserver.Options{Assets: assets, Middleware: proxy.Middleware},
