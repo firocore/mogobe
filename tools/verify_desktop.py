@@ -15,7 +15,6 @@ import time
 import traceback
 import tempfile
 import secrets
-import sys
 
 import httpx
 from PIL import ImageGrab
@@ -224,8 +223,9 @@ def main():
         try:
             env = os.environ.copy()
             env["MOGOBE_BOOTSTRAP_DEFAULTS"]="false"
+            env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = "--mute-audio"
             env["MOGOBE_DATABASE_URL"] = "sqlite+aiosqlite:///"+database.as_posix()
-            env['PYTHONPATH'] = str(ROOT/'server/.venv/Lib/site-packages')
+            env.pop('PYTHONPATH', None)
             # Target port exists only in the config; no --server argument is passed.
             cfg = directory / "client.json"
             cfg.write_text(json.dumps({"server_url":"http://127.0.0.1:18080", "request_timeout_seconds":5}), encoding="utf-8")
@@ -241,10 +241,13 @@ def main():
             assert c.js("window.mogobeScene?.state === 'connecting' && !window.mogobeReady")
             c.capture("00-connecting-original-preloader")
             result["checks"]["original_preloader_while_server_offline"] = True
-            processes.append(subprocess.Popen([sys._base_executable, "run.py", "--port", "18080"], cwd=ROOT / "server", env=env, stdout=backend_log, stderr=subprocess.STDOUT))
+            processes.append(subprocess.Popen([str(PYTHON), "run.py", "--port", "18080"], cwd=ROOT / "server", env=env, stdout=backend_log, stderr=subprocess.STDOUT))
             wait_http("http://127.0.0.1:18080/api/health")
             c.wait("window.mogobeScene?.state === 'lobby'", 60)
             assert c.js("window.mogobeConnection === 'connected'")
+            assert c.js("window.player.ruffle().loadedConfig.warnOnUnsupportedContent === false && window.player.ruffle().loadedConfig.splashScreen === false")
+            assert c.js("!window.player.shadowRoot.querySelector('#message-overlay')")
+            result['checks']['ruffle_compatibility_warning_disabled'] = True
             result["checks"]["automatic_connection_after_server_start"] = True
             c.capture("01-original-login")
             result["checks"]["original_login_visible"] = True
@@ -267,6 +270,15 @@ def main():
             result["checks"]["original_color_callback"] = True
             c.js("document.getElementById('aspnetForm').requestSubmit()")
             c.wait("location.pathname === '/Registration3.aspx' && !!window.MOGO_REG_STEP")
+            # Use actual Windows editing keys rather than assigning the final value.
+            for suffix in ['txtNick', 'txtPass', 'txtRePass']:
+                c.js("field("+json.dumps(suffix)+").focus()")
+                c.type_text('First123')
+                c.type_text('Other456')
+                assert c.js("field("+json.dumps(suffix)+").value === 'Other456'")
+                c.type_text('')
+                assert c.js("field("+json.dumps(suffix)+").value === ''")
+            result['checks']['registration_fields_can_be_replaced_and_cleared'] = True
             c.capture("03-credentials")
             for invalid_name in ['Bad Name','Bad!Name',' Name12','Name12 ']:
                 assert c.js("field('txtNick').value="+json.dumps(invalid_name)+"; field('txtNick').validity.patternMismatch")
@@ -288,7 +300,12 @@ def main():
             with sqlite3.connect(database) as db:
                 result["checks"]["account_not_created_early"] = db.execute("SELECT count(*) FROM auth_account").fetchone()[0] == 0
             c.capture("04-age-chat")
-            c.js("field('ddlAge').value='12';field('imgYoung').click();document.getElementById('aspnetForm').requestSubmit()")
+            assert c.js("field('ddlAge').type === 'number' && field('ddlAge').min === '1' && field('ddlAge').max === '100'")
+            for invalid_age in ['', '0', '101', '1.5']:
+                assert c.js("field('ddlAge').value="+json.dumps(invalid_age)+"; !field('ddlAge').validity.valid")
+            for valid_age in ['1', '100']:
+                assert c.js("field('ddlAge').value="+json.dumps(valid_age)+"; field('ddlAge').validity.valid")
+            c.js("field('ddlAge').value='42';field('imgYoung').click();document.getElementById('aspnetForm').requestSubmit()")
             c.wait("location.pathname === '/Registration5.aspx' && field('btnAgree')?.type === 'checkbox'")
             c.capture("05-rules")
             assert c.js("!field('btnAgree').checked && !field('btnEmailAgree').checked")
@@ -300,7 +317,7 @@ def main():
             c.capture("07-complete")
             with sqlite3.connect(database) as db:
                 row = db.execute("SELECT color_id,age,chat_mode,password_hash FROM auth_account WHERE username='Desktop_12'").fetchone()
-                result["checks"]["profile_persisted"] = row[0] == selected_color and row[1:3] == (12,"closed") and row[3].startswith("$argon2id$")
+                result["checks"]["profile_persisted"] = row[0] == selected_color and row[1:3] == (42,"closed") and row[3].startswith("$argon2id$")
                 assert db.execute("SELECT terms_accepted_at,newsletter FROM auth_account WHERE username='Desktop_12'").fetchone() == (None,0)
                 result["checks"]["registration_without_both_checkboxes"] = True
             assert c.js("fetch('/api/auth/me').then(r=>r.json()).then(user=>user.username==='Desktop_12')")

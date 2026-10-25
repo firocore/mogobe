@@ -63,6 +63,18 @@ if(step === 3) {
 }
 if([4,5,7].includes(step) && !draft.started) go(2);
 if(step === 4) {
+  const ageSelect = field('ddlAge');
+  const ageInput = document.createElement('input');
+  ageInput.id = ageSelect.id;
+  ageInput.name = ageSelect.name;
+  ageInput.className = ageSelect.className;
+  ageInput.type = 'number';
+  ageInput.min = '1';
+  ageInput.max = '100';
+  ageInput.step = '1';
+  ageInput.required = true;
+  ageInput.setAttribute('aria-label', 'Возраст');
+  ageSelect.replaceWith(ageInput);
   control('imgRegular','radio',draft.chat_mode !== 'closed');
   control('imgYoung','radio',draft.chat_mode === 'closed');
   if(draft.age) field('ddlAge').value = draft.age;
@@ -85,7 +97,8 @@ if(step === 8 || step === 'confirm') {
 let submitting = false;
 document.getElementById('aspnetForm')?.addEventListener('invalid',event=>{
   event.preventDefault();
-  error(event.target === field('txtNick') ? field('txtNick').title : 'Проверьте заполненные поля.');
+  error(event.target === field('txtNick') ? field('txtNick').title :
+    event.target === field('ddlAge') ? 'Введите целый возраст от 1 до 100.' : 'Проверьте заполненные поля.');
 },true);
 document.getElementById('aspnetForm')?.addEventListener('submit', async event => {
   event.preventDefault();
@@ -105,7 +118,7 @@ document.getElementById('aspnetForm')?.addEventListener('submit', async event =>
       draft.username = username; draft.started = true; save(); go(4);
     } else if(step === 4) {
       const age = Number(field('ddlAge').value);
-      if(age < 5 || age > 14) throw new Error('Выберите возраст.');
+      if(!Number.isInteger(age) || age < 1 || age > 100) throw new Error('Введите целый возраст от 1 до 100.');
       draft.age = age; draft.chat_mode = field('imgYoung').checked ? 'closed' : 'open'; save(); go(5);
     } else if(step === 5) {
       draft.accepted_terms = field('btnAgree').checked;

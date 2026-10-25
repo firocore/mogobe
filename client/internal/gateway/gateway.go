@@ -80,6 +80,13 @@ func (g *Gateway) Middleware(next http.Handler) http.Handler {
 			g.ServeHTTP(w, r)
 			return
 		}
+		// Archived registration pages are HTML despite their ASP.NET extension.
+		// Windows may register .aspx as XML, which prevents their scripts running.
+		switch lower {
+		case "/registration2.aspx", "/registration3.aspx", "/registration4.aspx",
+			"/registration5.aspx", "/registration7.aspx", "/registration8.aspx", "/confirmregistration.aspx":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

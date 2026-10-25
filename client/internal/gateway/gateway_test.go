@@ -10,6 +10,47 @@ import (
 	"time"
 )
 
+func TestRegistrationPagesUseHTMLWithoutChangingLegacyXML(t *testing.T) {
+	g := New("http://unused.invalid", time.Second)
+	pages := map[string]bool{
+		"/Registration2.aspx": true, "/Registration3.aspx": true,
+		"/Registration4.aspx": true, "/Registration5.aspx": true,
+		"/Registration7.aspx": true, "/Registration8.aspx": true,
+		"/ConfirmRegistration.aspx": true,
+	}
+	files := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !pages[r.URL.Path] && r.URL.Path != "/Servises/lang.aspx" {
+			http.NotFound(w, r)
+			return
+		}
+		// Simulate Windows registering .aspx as XML.
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "application/xml")
+		}
+		io.WriteString(w, "<html></html>")
+	})
+	handler := g.Middleware(files)
+	for path := range pages {
+		t.Run(path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+			if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+				t.Fatalf("status %d, content type %q", w.Code, w.Header().Get("Content-Type"))
+			}
+		})
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("GET", "/Servises/lang.aspx", nil))
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/xml" {
+		t.Fatalf("legacy XML changed: status %d, content type %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("GET", "/Registrationconfirm.aspx", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("nonexistent registration page: status %d", w.Code)
+	}
+}
+
 func TestLegacyLoginUsesRemoteHTTPSPostAndLocalCookie(t *testing.T) {
 	remote := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/prefix/legacy/login" || r.URL.RawQuery != "" {

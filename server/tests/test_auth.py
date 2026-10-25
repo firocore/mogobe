@@ -48,6 +48,21 @@ async def register(client, start=None):
     return response.json()
 
 
+@pytest.mark.parametrize("age", [1, 4, 15, 42, 100])
+async def test_registration_accepts_numeric_age(client, age):
+    assert (await client.post("/api/auth/registration-drafts", json=START)).status_code == 201
+    response = await client.post("/api/auth/register", json={**FINISH, "age": age})
+    assert response.status_code == 201, response.text
+    assert (await client.get("/api/auth/me")).json()["age"] == age
+
+
+@pytest.mark.parametrize("age", [0, 101, -1, 1.5, True, "12", None])
+async def test_registration_rejects_invalid_numeric_age(client, age):
+    assert (await client.post("/api/auth/registration-drafts", json=START)).status_code == 201
+    response = await client.post("/api/auth/register", json={**FINISH, "age": age})
+    assert response.status_code == 422
+
+
 @pytest.mark.parametrize(
     "username",
     [

@@ -10,7 +10,7 @@ class Account(Base):
     __tablename__ = "auth_account"
     __table_args__ = (
         CheckConstraint("color_id BETWEEN 1 AND 12", name="color_range"),
-        CheckConstraint("age BETWEEN 5 AND 14", name="age_range"),
+        CheckConstraint("age BETWEEN 1 AND 100", name="age_range"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

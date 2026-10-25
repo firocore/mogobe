@@ -17,7 +17,7 @@ class RegistrationStart(Credentials):
 
 
 class RegistrationFinish(BaseModel):
-    age: int = Field(ge=5, le=14)
+    age: int = Field(ge=1, le=100, strict=True)
     chat_mode: Literal["open", "closed"]
     accepted_terms: bool = False
     newsletter: bool = False
