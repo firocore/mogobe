@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 SUITES = {
+    "inputs": ("verify_input_fields.py", []),
     "chat-layout": ("verify_chat.py", ["--layout"]),
     "chat-history": ("verify_chat.py", ["--history"]),
     "chat-bubbles": ("verify_chat.py", ["--bubbles"]),

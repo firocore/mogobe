@@ -7,12 +7,13 @@ Originals are copied byte-for-byte to assets/original and never patched there.
 import filecmp
 import hashlib
 import json
-from pathlib import Path
 import re
 import shutil
 import sys
+from pathlib import Path
 
 from prepare_item_assets import prepare_items
+from verify_asset_inputs import verify_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,6 +40,9 @@ def main():
                 copy_resource(metadata, compat / metadata.name)
         shutil.copytree(source / "ruffle", ROOT / "assets/ruffle", dirs_exist_ok=True, copy_function=copy_resource)
         copy_resource(source / "ui/app.ico", ROOT / "client/build/windows/icon.ico")
+
+    audit = verify_inputs(ROOT)
+    print(f"Verified {audit['input_count']} repository asset inputs; no external archive required")
 
     web = ROOT / "client/frontend"
     manifest = []

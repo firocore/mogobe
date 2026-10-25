@@ -35,7 +35,10 @@ def main():
         "original_game_asset": False, "original_graphics": True,
         "source": source.relative_to(ROOT).as_posix(),
         "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-        "source_archive": "He/MainFiles/ControlPanel[9].swf", "panel_symbol": 302,
+        "provenance": {"original_archive_entry": "He/MainFiles/ControlPanel[9].swf", "required_at_runtime": False},
+        "build_inputs": [source.relative_to(ROOT).as_posix(), "tools/build_loading_stub.py", "tools/swf_room_data.py"],
+        "runtime_inputs": ["assets/compat/ChatHistory.swf", "assets/original/Swf/Login.swf"],
+        "panel_symbol": 302,
         "panel_geometry": {
             "top_left": [-64.1, -152.45], "top_right": [214.85, -152.45],
             "bottom_left": [-49.15, 0.3], "bottom_right": [201.75, 0.3],

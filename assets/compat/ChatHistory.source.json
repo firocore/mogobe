@@ -3,7 +3,19 @@
   "original_graphics": true,
   "source": "assets/original/Swf/Preserved/ControlPanelIsraelChat.swf",
   "source_sha256": "bf53887e66f184ee099b1c3fb2eba383b679ad119ddbe979b34a14cb4566e8e4",
-  "source_archive": "He/MainFiles/ControlPanel[9].swf",
+  "provenance": {
+    "original_archive_entry": "He/MainFiles/ControlPanel[9].swf",
+    "required_at_runtime": false
+  },
+  "build_inputs": [
+    "assets/original/Swf/Preserved/ControlPanelIsraelChat.swf",
+    "tools/build_loading_stub.py",
+    "tools/swf_room_data.py"
+  ],
+  "runtime_inputs": [
+    "assets/compat/ChatHistory.swf",
+    "assets/original/Swf/Login.swf"
+  ],
   "panel_symbol": 302,
   "panel_geometry": {
     "top_left": [

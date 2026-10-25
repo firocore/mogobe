@@ -6,9 +6,9 @@ Normal client builds reuse the checked-in compiled adapter and do not need Java.
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,6 +34,7 @@ def main():
     movie.with_suffix(".source.json").write_text(json.dumps({
         "original_game_asset": False,
         "source": "tools/host/MogobeHost.as",
+        "source_sha256": hashlib.sha256((ROOT / "tools/host/MogobeHost.as").read_bytes()).hexdigest(),
         "compiler": "JPEXS 26.3.0",
         "role": "Load original login, saved-avatar picker, registration alerts, Main, world map, rooms and avatar; retain original preloader until room, panel and avatar are ready",
         "sha256": hashlib.sha256(movie.read_bytes()).hexdigest(),

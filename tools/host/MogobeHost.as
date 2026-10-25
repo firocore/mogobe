@@ -2,6 +2,7 @@ package {
     import flash.display.BitmapData;
     import flash.display.Bitmap;
     import flash.utils.ByteArray;
+    import flash.utils.Dictionary;
     import flash.media.SoundMixer;
     import flash.display.DisplayObject;
     import flash.display.DisplayObjectContainer;
@@ -1345,6 +1346,7 @@ package {
         }
 
         private function finishOriginalFrame(event:Event):void {
+            updateFocusedInput();
             updateSpeechBalloons();
             if (stage != null) stage.invalidate();
             if (mainClip == null) return;
@@ -1363,6 +1365,7 @@ package {
         }
 
         private function finishOriginalRender(event:Event):void {
+            updateFocusedInput();
             updateSpeechBalloons();
             // RENDER follows every descendant's frame scripts, including the
             // OVER frame which can recreate authored text after EXIT_FRAME.
@@ -1685,9 +1688,6 @@ package {
                 field.multiline = false;
                 field.wordWrap = false;
                 field.maxChars = 240;
-                chatCaret = -1;
-                chatText = "";
-                chatContentScroll = 0;
                 // Raise only the editable text. Leave the original input
                 // background and send button at their authored positions.
                 field.y -= 3;
@@ -1705,26 +1705,67 @@ package {
                 field.defaultTextFormat = format;
                 field.setTextFormat(format);
             }
-            // Ruffle does not consistently scroll embedded-font inputs after
-            // a paste or setTextFormat. Follow the actual insertion point.
-            if (field.length == 0) field.scrollH = 0;
-            if (stage != null && stage.focus == field) {
-                var inputWidth:Number = field.getBounds(field).width;
-                if (chatCaret != field.caretIndex || chatText != field.text) {
-                    chatCaret = field.caretIndex;
-                    chatText = field.text;
-                    // maxScrollH includes extra trailing space in Ruffle.
-                    // Fit the real insertion point with a four-pixel gutter.
-                    chatContentScroll = Math.max(0,Math.ceil(chatTextX(field,field.length)-inputWidth+4));
-                    var caretX:Number = chatTextX(field,chatCaret);
-                    if (chatCaret == field.length) field.scrollH = chatContentScroll;
-                    else if (chatCaret == 0) field.scrollH = 0;
-                    else if (caretX > field.scrollH+inputWidth-4) field.scrollH = Math.ceil(caretX-inputWidth+4);
-                    else if (caretX < field.scrollH+2) field.scrollH = Math.max(0,Math.floor(caretX-2));
-                }
-                if (field.scrollH > chatContentScroll) field.scrollH = chatContentScroll;
-            }
         }
+
+        // BEGIN SHARED INPUT COMPATIBILITY
+        // Ruffle 0.7.1 does not reveal native TextField selections when typing
+        // or moving the caret. Keep this shared by the game and plain-SWF probe.
+        private var inputCompatibilityState:Dictionary = new Dictionary(true);
+
+        private function inputCaretX(field:TextField, index:int):Number {
+            if (index <= 0) return 2;
+            var previous:int = field.scrollH;
+            field.scrollH = 0;
+            var glyph:Rectangle = field.getCharBoundaries(index-1);
+            field.scrollH = previous;
+            return glyph == null ? field.textWidth+2 : glyph.right;
+        }
+
+        private function updateFocusedInput():void {
+            if (stage == null) return;
+            var field:TextField = stage.focus as TextField;
+            if (field == null || field.type != "input" || field.stage == null) return;
+            var state:Object = inputCompatibilityState[field];
+            if (state == null) {
+                // Cache only selection/layout metadata, never input contents.
+                state={length:-1,caret:-1,line:-1,lines:-1,width:-1,height:-1};
+                inputCompatibilityState[field]=state;
+            }
+            var length:int=field.length;
+            var caret:int=field.caretIndex;
+            var width:Number=field.getBounds(field).width;
+            var line:int=length==0 ? 1 : field.getLineIndexOfChar(Math.min(caret,length-1))+1;
+            if (caret == length) line=field.numLines;
+            var changed:Boolean=state.length!=length || state.caret!=caret || state.line!=line ||
+                state.lines!=field.numLines || state.width!=width || state.height!=field.height;
+            if (length == 0 || field.wordWrap) {
+                if (field.scrollH != 0) field.scrollH=0;
+            } else {
+                var endX:Number=field.multiline ? Math.max(field.textWidth+2,inputCaretX(field,length)) : inputCaretX(field,length);
+                var maximum:int=Math.max(0,Math.ceil(endX-width+4));
+                var target:int=field.scrollH;
+                var x:Number=inputCaretX(field,caret);
+                if (caret==length && !field.multiline) target=maximum;
+                else if (caret==0) target=0;
+                else if (x>target+width-4) target=Math.ceil(x-width+4);
+                else if (x<target+2) target=Math.max(0,Math.floor(x-2));
+                target=Math.max(0,Math.min(target,maximum));
+                if (field.scrollH!=target) field.scrollH=target;
+            }
+            // Reveal edits/caret moves vertically. Do not snap manual wheel
+            // scrolling back to the caret while the selection is unchanged.
+            if (changed && field.numLines>1) {
+                if (line<field.scrollV) field.scrollV=line;
+                else if (line>field.bottomScrollV) {
+                    var visible:int=Math.max(1,field.bottomScrollV-field.scrollV+1);
+                    field.scrollV=Math.min(field.maxScrollV,Math.max(1,line-visible+1));
+                    while (line>field.bottomScrollV && field.scrollV<field.maxScrollV) field.scrollV++;
+                }
+            }
+            state.length=length;state.caret=caret;state.line=line;
+            state.lines=field.numLines;state.width=width;state.height=field.height;
+        }
+        // END SHARED INPUT COMPATIBILITY
 
         private var chatHistoryLoader:Loader;
         private var chatHistoryDomain:ApplicationDomain;
@@ -2083,20 +2124,6 @@ package {
                 x:button.x,y:button.y,width:button.width,height:button.height};
         }
 
-        private function chatTextX(field:TextField, index:int):Number {
-            if (index <= 0) return 2;
-            // Read glyph coordinates without scrolling; no frame is painted
-            // while this synchronous measurement temporarily resets scrollH.
-            var previous:int = field.scrollH;
-            field.scrollH = 0;
-            var glyph:Rectangle = field.getCharBoundaries(index-1);
-            field.scrollH = previous;
-            return glyph == null ? field.textWidth+2 : glyph.right;
-        }
-
-        private var chatCaret:int = -1;
-        private var chatText:String = "";
-        private var chatContentScroll:int = 0;
         private var roomAudioManager:Object;
         private var roomAudioMuted:Boolean = false;
         private var roomAudioCompletions:int = 0;
@@ -2167,8 +2194,8 @@ package {
                 textWidth:field == null ? 0 : field.textWidth,
                 scrollH:field == null ? 0 : field.scrollH,
                 maxScrollH:field == null ? 0 : field.maxScrollH,
-                contentScrollH:chatContentScroll,
-                caretRightGap:field == null ? 0 : field.getBounds(field).width-chatTextX(field,field.caretIndex)+field.scrollH,
+                contentScrollH:field == null ? 0 : Math.max(0,Math.ceil(inputCaretX(field,field.length)-bounds.width+4)),
+                caretRightGap:field == null ? 0 : field.getBounds(field).width-inputCaretX(field,field.caretIndex)+field.scrollH,
                 caret:field == null ? 0 : field.caretIndex,
                 multiline:field != null && field.multiline,
                 wordWrap:field != null && field.wordWrap,
