@@ -467,6 +467,7 @@ def main():
                     a.chat_send('/exit');a.wait("window.mogobeLogin?.view === 'saved'",40)
                     result['checks']['chat_commands_still_work'] = True
                 elif args.presence:
+                    friend_room = json.dumps(a.js("fetch('/api/world/rooms').then(r=>r.json()).then(x=>x.rooms.find(r=>r.key==='infoboard').title)"))
                     popup = "window.player.ruffle().callExternalInterface('getSocialPopupInfo')"
                     server = "window.player.ruffle().callExternalInterface('getServerInfo')[0]"
                     def control(c,name):
@@ -497,7 +498,7 @@ def main():
                     a.control('btnBuddy')
                     a.wait(popup+"?.popupId === 24 && "+popup+"?.rows.some(v=>v.userName==='Могоби_2' && v.serverName===null)")
                     enter(b)
-                    a.wait(popup+"?.rows.some(v=>v.userName==='Могоби_2' && v.serverName==='Тестовый мир' && v.text.includes('Тестовый мир'))",20)
+                    a.wait(popup+"?.rows.some(v=>v.userName==='Могоби_2' && v.serverName==="+friend_room+" && v.text.includes("+friend_room+"))",20)
                     a.capture('presence/04-friend-goes-online')
                     result['checks']['open_friends_list_updates_when_friend_joins'] = True
                     b.chat_send('/online')
@@ -506,7 +507,7 @@ def main():
                     b.capture('presence/06-private-online-command')
                     result['checks']['online_command_reports_two_players_only_to_sender'] = True
                     b.chat_send('/exit');b.wait("window.mogobeLogin?.view === 'saved'",40)
-                    a.wait(popup+"?.rows.some(v=>v.userName==='Могоби_2' && v.serverName===null && !v.text.includes('Тестовый мир'))",20)
+                    a.wait(popup+"?.rows.some(v=>v.userName==='Могоби_2' && v.serverName===null && !v.text.includes("+friend_room+"))",20)
                     a.capture('presence/05-friend-goes-offline')
                     result['checks']['open_friends_list_updates_when_friend_exits'] = True
                     control(a,'btnClose')

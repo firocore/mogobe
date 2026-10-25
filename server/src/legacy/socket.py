@@ -153,7 +153,7 @@ class LegacyConnection:
             )
         else:
             self.hub.broadcast(ident, system("uER", self.user_xml(), ident), exclude=self)
-        if previous is None:
+        if previous != ident:
             await self.notify_presence_observers()
 
     async def notify_presence_observers(self):

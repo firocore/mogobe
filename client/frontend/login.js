@@ -351,6 +351,18 @@ async function waitForServer() {
     window.player = player;
     document.getElementById('movie').appendChild(player);
     await player.ruffle().load({url:'/compat/OriginalPreloader.swf',base:location.origin+'/'});
+    // The browser keeps the fullscreen element at viewport size. Frame the
+    // actual render container inside it, preserving Ruffle's fullscreen API
+    // and the original 8:5 game area. The runtime's files remain unchanged.
+    if(player.shadowRoot) {
+      const style = document.createElement('style');
+      style.textContent = `:host(:fullscreen) #container {
+        box-sizing:content-box;inset:0;margin:auto;
+        width:var(--mogobe-stage-width);height:var(--mogobe-stage-height);
+        border:10px solid #fff;box-shadow:10px 10px 0 #5c7d08;overflow:hidden;
+      }`;
+      player.shadowRoot.appendChild(style);
+    }
     window.mogobeScene = {state:'connecting'};
     window.originalConnectionLoaderReady = true;
     await waitForServer();

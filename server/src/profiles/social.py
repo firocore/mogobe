@@ -7,6 +7,7 @@ from sqlalchemy.dialects.sqlite import insert
 from src.auth.models import Account
 from src.profiles.models import FriendRequest, Friendship, SocialPreference
 from src.profiles.service import find_profile
+from src.world import catalog
 
 
 def pair(a, b):
@@ -103,13 +104,15 @@ async def buddy_list(db, owner, hub):
             else 1
         )
         peer = hub.connections.get(account.id)
-        online = peer is not None and peer.room is not None
+        online = peer is not None and peer.room is not None and peer.user is not None
         result.append(
             dict(
                 buddyId=account.id,
                 buddyName=account.username,
                 status=status,
-                serverName=hub.server_name if online else None,
+                # The original BuddyTO calls this label ServerName. Preserve the
+                # wire contract (null means offline), but display the live room.
+                serverName=catalog.BY_ID[peer.room]["title"] if online else None,
             )
         )
     return result

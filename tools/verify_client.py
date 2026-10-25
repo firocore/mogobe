@@ -5,6 +5,9 @@ import subprocess
 import sys
 
 SUITES = {
+    "chat-bubbles": ("verify_chat.py", ["--bubbles"]),
+    "chat": ("verify_chat.py", []),
+    "ui-regressions": ("verify_ui_regressions.py", []),
     "room-audio": ("verify_room_audio.py", []),
     "minigames": ("verify_minigames.py", []),
     "login-outfits": ("verify_login_outfits.py", []),

@@ -3,9 +3,11 @@ from xml.etree.ElementTree import fromstring
 from fastapi.testclient import TestClient
 from test_multiplayer import account, auth, join
 from test_social import until
-from test_world import receive, send
+from test_world import extension, receive, send
 
 from src.profiles.models import FriendRequest, Friendship
+from src.shops.models import Shop
+from src.world.catalog import BY_KEY, START_ROOM
 
 
 def snapshot(client, token):
@@ -22,6 +24,7 @@ def test_live_presence_counts_joined_players_and_not_saved_sessions(app):
 
         async def seed():
             async with app.state.sessions() as db:
+                db.add(Shop(key="presence", title="Presence", kind="clothing"))
                 db.add(Friendship(first_id=aid, second_id=bid))
                 db.add(FriendRequest(sender_id=cid, recipient_id=aid))
                 await db.commit()
@@ -39,7 +42,7 @@ def test_live_presence_counts_joined_players_and_not_saved_sessions(app):
                 join(b, "Presence_2")
                 data, _ = until(a, "buddyList__getUserBuddies")
                 row = next(row for row in data["buddies"] if row["buddyId"] == bid)
-                assert row["serverName"] == app.state.settings.server_name
+                assert row["serverName"] == START_ROOM["title"]
                 state = snapshot(client, atoken)
                 assert state["online"] == 2 and state["friends"] == 1 and state["percentage"] == 2
                 legacy = fromstring(
@@ -47,6 +50,29 @@ def test_live_presence_counts_joined_players_and_not_saved_sessions(app):
                 ).find("Servers/S")
                 assert legacy.get("currentUsers") == "2" and legacy.get("friends") == "1"
                 assert legacy.get("percentage") == "2"
+                # Existing friend-list windows receive room changes without
+                # HTTP polling. Being in another room/shop still counts online.
+                send(
+                    b,
+                    '<msg t="sys"><body action="pubMsg">'
+                    '<txt>speak__/room infoboard</txt></body></msg>',
+                )
+                while 'action="joinOK"' not in receive(b):
+                    pass
+                data, _ = until(a, "buddyList__getUserBuddies")
+                row = next(row for row in data["buddies"] if row["buddyId"] == bid)
+                assert row["serverName"] == BY_KEY["infoboard"]["title"]
+                send(
+                    b,
+                    '<msg t="sys"><body action="pubMsg">'
+                    '<txt>speak__/shop presence</txt></body></msg>',
+                )
+                # A following round-trip fences the shop command.
+                extension(b, "user__getMyMoney")
+                until(b, "user__getMyMoney")
+                assert client.get("/api/shops/presence", headers=auth(btoken)).status_code == 200
+                assert snapshot(client, atoken)["online"] == 2
+                assert snapshot(client, atoken)["friends"] == 1
             data, _ = until(a, "buddyList__getUserBuddies")
             assert (
                 next(row for row in data["buddies"] if row["buddyId"] == bid)["serverName"] is None
@@ -85,8 +111,6 @@ def test_online_command_is_private_and_counts_only_joined_players(app):
                 body = fromstring(receive(b)).find("body")
                 assert body.findtext("txt") == "speak__Сейчас в игре: 2"
                 assert body.find("user").get("id") == str(bid)
-                from test_world import extension
-
                 extension(a, "user__getMyMoney")
                 _, packets = until(a, "user__getMyMoney")
                 assert not any(

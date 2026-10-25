@@ -1,9 +1,16 @@
+:root{--mogobe-stage-width:min(calc(100vw - 78px),calc(160dvh - 124.8px));--mogobe-stage-height:min(calc(62.5vw - 48.75px),calc(100dvh - 78px))}
 html,body{margin:0;min-height:100%;color:#173359;font:16px Arial,sans-serif;background:#a6cd0a url('/Media/images/CleanBG.png') repeat left top}
 body{box-sizing:border-box;display:grid;place-items:center;min-height:100dvh;padding:24px 34px 34px 24px}
 /* play.aspx (2012-07-01): 10px white border, 10px solid #5C7D08 offset shadow. */
-#game-frame{width:min(calc(100vw - 78px),calc(160dvh - 124.8px));padding:10px;background:#fff;box-shadow:10px 10px 0 #5c7d08}
-#stage{position:relative;width:100%;aspect-ratio:8/5}
-#movie,ruffle-player{width:100%;height:100%}
+#game-frame{width:var(--mogobe-stage-width);padding:10px;background:#fff;box-shadow:10px 10px 0 #5c7d08}
+#stage{position:relative;width:100%;aspect-ratio:8/5;overflow:hidden}
+#movie,ruffle-player{display:block;width:100%;height:100%}
+/* Ruffle requests fullscreen on its player, outside the page's frame. Keep
+   the same original border/shadow around the 768 x 480 movie in that mode. */
+ruffle-player:fullscreen{
+  border:0;background:#a6cd0a url('/Media/images/CleanBG.png') repeat left top;overflow:hidden;
+}
+ruffle-player::backdrop{background:#a6cd0a url('/Media/images/CleanBG.png') repeat left top}
 #loading{position:absolute;inset:0;z-index:2;cursor:wait}
 [hidden]{display:none!important}
 #notice{position:fixed;bottom:12px;padding:12px;background:#fff3cd;max-width:700px;border-radius:8px}

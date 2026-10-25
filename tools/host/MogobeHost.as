@@ -1,5 +1,6 @@
 package {
     import flash.display.BitmapData;
+    import flash.display.Bitmap;
     import flash.utils.ByteArray;
     import flash.media.SoundMixer;
     import flash.display.DisplayObject;
@@ -17,8 +18,11 @@ package {
     import flash.external.ExternalInterface;
     import flash.net.URLRequest;
     import flash.geom.Rectangle;
+    import flash.geom.Point;
     import flash.geom.Matrix;
     import flash.text.TextField;
+    import flash.text.StaticText;
+    import flash.text.TextFieldAutoSize;
     import flash.text.TextFormat;
     import flash.text.TextFormatAlign;
     import flash.system.ApplicationDomain;
@@ -75,6 +79,7 @@ package {
 
         public function MogobeHost() {
             super();
+            scrollRect = new Rectangle(0,0,768,480);
             if (loaderInfo.parameters.popupMode == "true") {
                 loadRegistrationPopup();
                 return;
@@ -97,6 +102,7 @@ package {
             // Timeline frames and the original controllers can recreate text
             // after ENTER_FRAME. Repair the completed frame before it is drawn.
             addEventListener(Event.EXIT_FRAME, finishOriginalFrame);
+            addEventListener(Event.RENDER, finishOriginalRender);
             ExternalInterface.addCallback("showOriginalLoading", showOriginalLoading);
             ExternalInterface.addCallback("refreshRememberedState", refreshRememberedState);
             ExternalInterface.addCallback("getLoginControlBounds", getLoginControlBounds);
@@ -363,16 +369,273 @@ package {
                 var avatar:DisplayObject = holder.getChildAt(i);
                 var type:String = getQualifiedClassName(avatar);
                 if (type != "worlds4u.view.avatar::MyAvatar" && type != "worlds4u.view.avatar::AvatarDocView") continue;
-                var balloon:DisplayObject = (avatar as DisplayObjectContainer).getChildByName("speakBallon");
+                var balloon:DisplayObject = avatarBalloon(avatar as DisplayObjectContainer);
                 var text:String = "";
                 if (balloon != null) text = collectText(balloon);
                 var clothing:Array=[]; collectOutfitClips(avatar,clothing);
                 result.push({clothing:clothing,id:int(avatar.name), x:avatar.x, y:avatar.y, colorId:Object(avatar).Color, action:Object(avatar).currentAction, me:avatar == worldAvatar, speech:text,
+                    speechLayout:speechInfo(balloon),
+                    balloonCount:avatarBalloonCount(avatar as DisplayObjectContainer),
                     balloonType:balloon == null ? "" : getQualifiedClassName(balloon),
                     balloonLabel:balloon is MovieClip ? MovieClip(balloon).currentLabel : "",
                     balloonChildren:balloon is DisplayObjectContainer ? childTypes(balloon as DisplayObjectContainer) : []});
             }
             return result;
+        }
+
+        private var speechBalloons:Array = [];
+
+        private function avatarBalloon(avatar:DisplayObjectContainer):DisplayObject {
+            var nativeBalloon:DisplayObject = avatar.getChildByName("speakBallon");
+            return nativeBalloon == null ? avatar.getChildByName("mogobeSpeechBalloon") : nativeBalloon;
+        }
+
+        private function avatarBalloonCount(avatar:DisplayObjectContainer):int {
+            var count:int = 0;
+            for (var i:int = 0; i < avatar.numChildren; i++) {
+                var child:DisplayObject = avatar.getChildAt(i);
+                if (child.name == "speakBallon" || child.name == "mogobeSpeechBalloon") count++;
+            }
+            return count;
+        }
+
+        private function observeSpeechBalloon(view:DisplayObject):void {
+            if (view == null || view.name != "speakBallon" || view.parent == null) return;
+            var avatar:DisplayObjectContainer = view.parent;
+            var type:String = getQualifiedClassName(avatar);
+            if (type != "worlds4u.view.avatar::MyAvatar" && type != "worlds4u.view.avatar::AvatarDocView") return;
+            // A new message, emotion or spell replaces the previous speech.
+            for (var i:int = speechBalloons.length-1; i >= 0; i--) {
+                var previous:Object = speechBalloons[i];
+                if (previous.avatar == avatar) {
+                    if (previous.balloon.parent == avatar) avatar.removeChild(previous.balloon);
+                    disposeSpeechSkin(previous);
+                    speechBalloons.splice(i,1);
+                }
+            }
+            type = getQualifiedClassName(view);
+            if (type != "mlBallon_1" && type != "mlBallon_2" && type != "mlBallon_3") return;
+            // The original private timer removes only the child named
+            // speakBallon after four seconds. Manage text lifetime separately;
+            // emotions and spells retain that original name and timer.
+            view.name = "mogobeSpeechBalloon";
+            view.visible = false;
+            MovieClip(view).mouseEnabled = false;
+            MovieClip(view).mouseChildren = false;
+            speechBalloons.push({avatar:avatar,balloon:view,x:view.x,y:view.y,ready:false});
+        }
+
+        private function speechField(balloon:DisplayObjectContainer):TextField {
+            for (var i:int = 0; i < balloon.numChildren; i++) {
+                var field:TextField = balloon.getChildAt(i) as TextField;
+                if (field != null && field.visible && field.text.length > 0) return field;
+            }
+            return null;
+        }
+
+        private function makeSpeechSkin(original:Shape, source:Rectangle, tail:Number, width:Number, height:Number, entry:Object):Sprite {
+            var skin:Sprite = new Sprite();
+            skin.name = "mogobeSpeechSkin";
+            var sourceX:Array = [source.left,40,source.right-12,source.right];
+            var sourceY:Array = [source.top,source.top+4,source.bottom-tail-4,source.bottom];
+            var left:Number = source.left;
+            var top:Number = source.bottom-height;
+            var targetX:Array = [left,40,left+width-12,left+width];
+            var targetY:Array = [top,top+4,source.bottom-tail-4,source.bottom];
+            var resolution:Number = 2;
+            var pixels:BitmapData = new BitmapData(Math.ceil(width*resolution)+2,Math.ceil(height*resolution)+2,true,0);
+            // Compose the original vectors in one offscreen surface. Integer
+            // clips overlap by one pixel, so fractional avatar/window scaling
+            // cannot expose transparent seams between independent textures.
+            for (var row:int = 0; row < 3; row++) for (var col:int = 0; col < 3; col++) {
+                var sx:Number = (targetX[col+1]-targetX[col])/(sourceX[col+1]-sourceX[col]);
+                var sy:Number = (targetY[row+1]-targetY[row])/(sourceY[row+1]-sourceY[row]);
+                var placement:Matrix = new Matrix(sx*resolution,0,0,sy*resolution,
+                    (targetX[col]-sourceX[col]*sx-left)*resolution+1,
+                    (targetY[row]-sourceY[row]*sy-top)*resolution+1);
+                var x1:int = Math.max(0,Math.floor((targetX[col]-left)*resolution));
+                var y1:int = Math.max(0,Math.floor((targetY[row]-top)*resolution));
+                var x2:int = Math.min(pixels.width,Math.ceil((targetX[col+1]-left)*resolution)+2);
+                var y2:int = Math.min(pixels.height,Math.ceil((targetY[row+1]-top)*resolution)+2);
+                pixels.draw(original,placement,null,null,new Rectangle(x1,y1,x2-x1,y2-y1),true);
+            }
+            var bitmap:Bitmap = new Bitmap(pixels,"auto",true);
+            bitmap.scaleX = bitmap.scaleY = 1/resolution;
+            bitmap.x = left-1/resolution; bitmap.y = top-1/resolution;
+            skin.addChild(bitmap);
+            // Inspect actual rendered pixels at the interior joins, before the
+            // live embedded-font TextField is placed above this background.
+            var alpha:int = 255;
+            var x:int; var y:int;
+            for each (var seamX:Number in [40-left,width-12]) {
+                x = int(seamX*resolution)+1;
+                for (y = 13; y < int((height-tail-6)*resolution)+1; y++)
+                    alpha = Math.min(alpha,pixels.getPixel32(x,y)>>>24);
+            }
+            y = int((height-tail-4)*resolution)+1;
+            for (x = 29; x < int((width-14)*resolution)+1; x++)
+                alpha = Math.min(alpha,pixels.getPixel32(x,y)>>>24);
+            entry.seamAlpha = alpha;
+            entry.transparentCorners = ((pixels.getPixel32(0,0)|pixels.getPixel32(pixels.width-1,0)|
+                pixels.getPixel32(0,pixels.height-1)|pixels.getPixel32(pixels.width-1,pixels.height-1))>>>24) == 0;
+            return skin;
+        }
+
+        private function disposeSpeechSkin(entry:Object):void {
+            if (entry.skin == null || entry.skin.numChildren == 0) return;
+            var bitmap:Bitmap = entry.skin.getChildAt(0) as Bitmap;
+            if (bitmap != null && bitmap.bitmapData != null) {
+                bitmap.bitmapData.dispose();
+                bitmap.bitmapData = null;
+            }
+        }
+
+        private function prepareSpeech(entry:Object):Boolean {
+            var balloon:MovieClip = entry.balloon as MovieClip;
+            var field:TextField = speechField(balloon);
+            if (field == null) return false; // FontClass replaces the authored sample synchronously.
+            var original:Shape;
+            for (var i:int = 0; i < balloon.numChildren; i++) {
+                if (balloon.getChildAt(i) is Shape) { original = balloon.getChildAt(i) as Shape; break; }
+            }
+            if (original == null) return false;
+            var source:Rectangle = original.getBounds(balloon);
+            var type:String = getQualifiedClassName(balloon);
+            var tail:Number = type == "mlBallon_1" ? 6 : type == "mlBallon_2" ? 10 : 14;
+            var format:TextFormat = field.defaultTextFormat;
+            format.align = TextFormatAlign.LEFT;
+            format.leftMargin = 0; format.rightMargin = 0; format.indent = 0;
+            field.defaultTextFormat = format;
+            field.setTextFormat(format);
+            field.multiline = true;
+            field.wordWrap = false;
+            field.autoSize = TextFieldAutoSize.LEFT;
+            var paddingX:Number = 12;
+            var paddingY:Number = 4;
+            var scale:Number = Math.abs(field.scaleX);
+            var width:Number = Math.min(220,Math.max(128,Math.ceil((field.textWidth+4)*scale+paddingX*2)));
+            field.autoSize = TextFieldAutoSize.NONE;
+            field.wordWrap = true;
+            field.width = width-paddingX*2;
+            field.autoSize = TextFieldAutoSize.LEFT;
+            // Find the narrowest column that keeps the current line count.
+            // This balances wrapped words instead of leaving one long line
+            // followed by a mostly empty row in a needlessly wide bubble.
+            var lines:int = field.numLines;
+            var low:int = 128-paddingX*2;
+            var high:int = Math.ceil(field.width);
+            for (var attempt:int = 0; attempt < 8 && low < high; attempt++) {
+                var middle:int = (low+high)>>1;
+                field.width = middle;
+                if (field.numLines > lines) low = middle+1;
+                else high = middle;
+            }
+            field.width = high;
+            width = high+paddingX*2;
+            // Keep only the actual widest line and the native text gutter.
+            var longest:Number = 0;
+            for (i = 0; i < field.numLines; i++) longest = Math.max(longest,field.getLineMetrics(i).width*scale);
+            width = Math.min(width,Math.max(128,Math.ceil(longest+4*scale+paddingX*2)));
+            field.width = width-paddingX*2;
+            field.scrollH = 0; field.scrollV = 1;
+            var height:Number = Math.ceil(field.height+paddingY*2+tail);
+            var skin:Sprite = makeSpeechSkin(original,source,tail,width,height,entry);
+            balloon.removeChild(original);
+            balloon.addChildAt(skin,0);
+            entry.paddingX = paddingX; entry.paddingY = paddingY;
+            entry.skin = skin;
+            entry.skinRect = new Rectangle(source.left,source.bottom-height,width,height);
+            entry.field = field;
+            entry.duration = Math.min(20000,Math.max(4000,2000+field.text.length*60));
+            entry.expires = getTimer()+entry.duration;
+            entry.ready = true;
+            balloon.visible = true;
+            return true;
+        }
+
+        private function speechRect(node:DisplayObject, rect:Rectangle, target:DisplayObject):Rectangle {
+            // getBounds on nested scrollRect patches is inconsistent in Ruffle.
+            // Map the authored skin rectangle through the actual transforms.
+            var a:Point = target.globalToLocal(node.localToGlobal(new Point(rect.left,rect.top)));
+            var b:Point = target.globalToLocal(node.localToGlobal(new Point(rect.right,rect.bottom)));
+            return new Rectangle(Math.min(a.x,b.x),Math.min(a.y,b.y),Math.abs(b.x-a.x),Math.abs(b.y-a.y));
+        }
+
+        private function positionSpeech(entry:Object):void {
+            var balloon:MovieClip = entry.balloon as MovieClip;
+            var skin:Sprite = entry.skin as Sprite;
+            var field:TextField = entry.field as TextField;
+            balloon.x = entry.x; balloon.y = entry.y;
+            skin.scaleX = 1; skin.x = 0;
+            var normal:Rectangle = speechRect(skin,entry.skinRect,this);
+            if (normal.right > 760) {
+                // Mirror the original skin around its tail, keeping the text
+                // readable and the pointer attached to the same avatar point.
+                skin.scaleX = -1; skin.x = 49.4;
+                var mirrored:Rectangle = speechRect(skin,entry.skinRect,this);
+                if (mirrored.left < 8 && 8-mirrored.left > normal.right-760) {
+                    skin.scaleX = 1; skin.x = 0;
+                }
+            }
+            var box:Rectangle = speechRect(skin,entry.skinRect,balloon);
+            field.x = box.left+entry.paddingX; field.y = box.top+entry.paddingY;
+            var screen:Rectangle = speechRect(skin,entry.skinRect,this);
+            var dx:Number = screen.left < 8 ? 8-screen.left : screen.right > 760 ? 760-screen.right : 0;
+            var dy:Number = screen.top < 8 ? 8-screen.top : 0;
+            if (dx != 0 || dy != 0) {
+                var origin:Point = entry.avatar.globalToLocal(localToGlobal(new Point(0,0)));
+                var shifted:Point = entry.avatar.globalToLocal(localToGlobal(new Point(dx,dy)));
+                balloon.x += shifted.x-origin.x;
+                balloon.y += shifted.y-origin.y;
+            }
+        }
+
+        private function updateSpeechBalloons():void {
+            // Also catch speech created before an avatar was attached to the
+            // world, when its ADDED event could not reach the loader.
+            var avatars:DisplayObjectContainer = worldAvatar == null ? null : worldAvatar.parent;
+            for (var j:int = 0; avatars != null && j < avatars.numChildren; j++) {
+                var avatar:DisplayObjectContainer = avatars.getChildAt(j) as DisplayObjectContainer;
+                if (avatar == null) continue;
+                var pending:DisplayObject = avatar.getChildByName("speakBallon");
+                if (pending != null && getQualifiedClassName(pending).indexOf("mlBallon_") == 0) observeSpeechBalloon(pending);
+            }
+            for (var i:int = speechBalloons.length-1; i >= 0; i--) {
+                var entry:Object = speechBalloons[i];
+                if (entry.avatar.stage == null || entry.balloon.parent != entry.avatar) {
+                    if (entry.balloon.parent == entry.avatar) entry.avatar.removeChild(entry.balloon);
+                    disposeSpeechSkin(entry);
+                    speechBalloons.splice(i,1);
+                    continue;
+                }
+                if (!entry.ready && !prepareSpeech(entry)) continue;
+                if (getTimer() >= entry.expires) {
+                    entry.avatar.removeChild(entry.balloon);
+                    disposeSpeechSkin(entry);
+                    speechBalloons.splice(i,1);
+                } else positionSpeech(entry);
+            }
+        }
+
+        private function speechInfo(balloon:DisplayObject):Object {
+            for each (var entry:Object in speechBalloons) {
+                if (entry.balloon != balloon || !entry.ready) continue;
+                var bounds:Rectangle = speechRect(entry.skin,entry.skinRect,this);
+                var field:TextField = entry.field as TextField;
+                var text:Rectangle = speechRect(field,new Rectangle(0,0,field.width/Math.abs(field.scaleX),field.height/Math.abs(field.scaleY)),this);
+                var longest:Number = 0;
+                for (var i:int = 0; i < field.numLines; i++) longest = Math.max(longest,field.getLineMetrics(i).width*Math.abs(field.scaleX));
+                return {localWidth:entry.skinRect.width,localHeight:entry.skinRect.height,
+                    fieldWidth:field.width,longestLine:longest,seamAlpha:entry.seamAlpha,
+                    transparentCorners:entry.transparentCorners,
+                    x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,
+                    textX:text.x,textY:text.y,textWidth:text.width,textHeight:text.height,
+                    contentHeight:entry.field.textHeight,fieldHeight:entry.field.height,
+                    lines:entry.field.numLines,maxScrollV:entry.field.maxScrollV,
+                    duration:entry.duration,remaining:Math.max(0,entry.expires-getTimer()),
+                    mirrored:entry.skin.scaleX < 0};
+            }
+            return null;
         }
 
         private function collectServerRows(node:DisplayObject, rows:Array):void {
@@ -677,13 +940,18 @@ package {
 
         private function renderFriendField(view:Object, key:String, name:String, value:String):void {
             var original:TextField = view[key] as TextField;
-            var rendered:TextField = view.getChildByName(name) as TextField;
+            var holder:DisplayObjectContainer = DisplayObject(view).parent;
+            if (holder == null) return;
+            var rendered:TextField = holder.getChildByName(name) as TextField;
             if (rendered == null && original != null && original.parent != null) {
                 var fonts:Class = ApplicationDomain.currentDomain.getDefinition("FontClass") as Class;
                 rendered = Object(fonts).getInstance().addText(original,value);
                 rendered.name = name;
                 rendered.mouseEnabled = false;
+                // Keep labels outside the OVER/OUT timeline, as for item icons.
+                moveGridDecoration(rendered,holder);
             }
+            if (rendered != null) rendered.visible = true;
             // OVER/OUT frames recreate the movie's sample text. Keep the
             // persistent embedded-font label and suppress each new sample.
             if (original != null && original != rendered && original.parent != null) original.visible = false;
@@ -705,11 +973,17 @@ package {
                 // Offline OVER uses a different timeline text instance on its
                 // first visit. Its public txtName reference may still point at
                 // OUT, so suppress all authored samples, not just that reference.
-                for (var j:int = 0; j < nameView.numChildren; j++) {
-                    var sample:TextField = nameView.getChildAt(j) as TextField;
-                    if (sample != null && sample.name != "mogobeBuddyName" && sample.name != "mogobeBuddyServer") sample.visible = false;
-                }
+                suppressFriendSamples(nameView as DisplayObject);
             }
+        }
+
+        private function suppressFriendSamples(node:DisplayObject):void {
+            if (node is TextField || node is StaticText) {
+                node.visible = false;
+                return;
+            }
+            var holder:DisplayObjectContainer = node as DisplayObjectContainer;
+            for (var i:int = 0; holder != null && i < holder.numChildren; i++) suppressFriendSamples(holder.getChildAt(i));
         }
 
         private function hideLuxuryCurrency(view:DisplayObjectContainer):void {
@@ -961,14 +1235,15 @@ package {
             if(popup==null)return null;
             var cells:Array=[]; collectInventoryCells(popup.baseView,cells);
             var clothing:Array=[];collectOutfitClips(popup.baseView,clothing);
-            return {cells:cells,clothing:clothing};
+            var tabs:MovieClip = findNamed(popup.baseView,"mcTabs",0) as MovieClip;
+            return {tab:tabs == null ? "" : tabs.currentLabel,cells:cells,clothing:clothing};
         }
 
         private function collectInventoryCells(node:DisplayObject,cells:Array):void {
             if(getQualifiedClassName(node)=="worlds4u.common.uiControls.DataGrid::GridCell") {
                 var data:Object=Object(node).Data;
                 var bounds:Rectangle=node.getBounds(this);
-                cells.push({id:data.ID,typeId:data.TypeId,x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height});return;
+                cells.push({id:data.ID,typeId:data.TypeId,mainType:data.MType,visible:node.visible,x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height});return;
             }
             var holder:DisplayObjectContainer=node as DisplayObjectContainer;
             for(var i:int=0;holder!=null && i<holder.numChildren;i++)collectInventoryCells(holder.getChildAt(i),cells);
@@ -1026,6 +1301,7 @@ package {
 
         private function originalDisplayAdded(event:Event):void {
             var view:DisplayObject = event.target as DisplayObject;
+            observeSpeechBalloon(view);
             prepareRoomView(view);
             if (view != null && getQualifiedClassName(view) == "mlWorldScoreSign") {
                 scoreSignsShown++;
@@ -1066,6 +1342,8 @@ package {
         }
 
         private function finishOriginalFrame(event:Event):void {
+            updateSpeechBalloons();
+            if (stage != null) stage.invalidate();
             if (mainClip == null) return;
             refreshFriendsFonts();
             updateProfileCounters();
@@ -1074,8 +1352,71 @@ package {
             watchOriginalShop();
             updateShopLayout();
             var profile:Object = currentProfile();
-            if (profile != null) preserveGridDecorations(profile.baseView);
+            if (profile != null) {
+                updateInventory(profile);
+                preserveGridDecorations(profile.baseView);
+            }
             updateWorldMap();
+        }
+
+        private function finishOriginalRender(event:Event):void {
+            updateSpeechBalloons();
+            // RENDER follows every descendant's frame scripts, including the
+            // OVER frame which can recreate authored text after EXIT_FRAME.
+            refreshFriendsFonts();
+            var profile:Object = currentProfile();
+            if (profile != null) {
+                updateInventory(profile);
+                preserveGridDecorations(profile.baseView);
+            }
+        }
+
+        private var inventoryPopup:Object;
+        private var inventoryFilter:Object;
+
+        private function inventoryRequest(event:Event):void {
+            if (Object(event).Cmd != "user__getInventoryItems" || inventoryPopup == null) return;
+            var request:Object = Object(event).Data;
+            var categories:Array = [];
+            if (request.placeCategorys != null) for each (var category:Object in request.placeCategorys) categories.push(int(category));
+            inventoryFilter = {mainType:int(request.mainType),categories:categories};
+            var grid:Object = shopGrid(inventoryPopup.baseView,"ButtonDataGrid");
+            if (grid == null) return;
+            // Discard the previous tab synchronously; the original controller
+            // otherwise leaves it visible until the network response arrives.
+            grid.Data = [];
+            grid.baind();
+            prepareInventoryCells(grid as DisplayObject);
+        }
+
+        private function updateInventory(profile:Object):void {
+            if (profile.PopupId != 7) return;
+            if (inventoryPopup != profile) {
+                if (inventoryPopup != null) inventoryPopup.removeEventListener("ASK_DATA_EVT",inventoryRequest);
+                inventoryPopup = profile;
+                inventoryFilter = null;
+                profile.addEventListener("ASK_DATA_EVT",inventoryRequest,false,200);
+            }
+            var inventory:DisplayObject = findNamed(profile.baseView,"mcAvatarInventory",0);
+            if (inventory != null) prepareInventoryCells(inventory);
+        }
+
+        private function prepareInventoryCells(node:DisplayObject):void {
+            var type:String = getQualifiedClassName(node);
+            if (type == "worlds4u.common.uiControls.DataGrid::GridCell") {
+                // A GridCell first contains the authored example. Its real art
+                // is attached asynchronously by ItemFactory, even from cache.
+                var item:Object = Object(node).Data;
+                var matches:Boolean = inventoryFilter == null || int(item.MType) == inventoryFilter.mainType;
+                if (matches && inventoryFilter != null && inventoryFilter.categories.length > 0)
+                    matches = inventoryFilter.categories.indexOf(int(item.PCat)) >= 0;
+                // A response from a quickly abandoned tab can arrive after the
+                // new request. Never paint rows outside the selected filter.
+                node.visible = matches && findShopGraphic(node,"btnItem") != null;
+                return;
+            }
+            var holder:DisplayObjectContainer = node as DisplayObjectContainer;
+            for (var i:int = 0; holder != null && i < holder.numChildren; i++) prepareInventoryCells(holder.getChildAt(i));
         }
 
         private function preloadProfileIcons():void {
@@ -1335,18 +1676,66 @@ package {
             }
             var field:TextField = findNamed(findNamed(controls,"mcChat",0),"txtSpeak",0) as TextField;
             if (field == null) return;
-            // setTextFormat alone leaves the empty input's default paragraph
-            // right-aligned. Apply both so digits and commands also start left.
-            var format:TextFormat = field.defaultTextFormat;
-            format.align = TextFormatAlign.LEFT;
-            format.leftMargin = 0;
-            format.rightMargin = 0;
-            format.indent = 0;
-            field.defaultTextFormat = format;
-            field.setTextFormat(format);
+            if (Object(controls).mogobeChatPrepared != field) {
+                Object(controls).mogobeChatPrepared = field;
+                field.autoSize = TextFieldAutoSize.NONE;
+                field.multiline = false;
+                field.wordWrap = false;
+                field.maxChars = 240;
+                chatCaret = -1;
+                chatText = "";
+                chatContentScroll = 0;
+                // Raise only the editable text. Leave the original input
+                // background and send button at their authored positions.
+                field.y -= 3;
+            }
+            // Formatting every frame resets the input's horizontal scrolling.
+            // Only repair a direction change made by the original text manager.
+            if (field.defaultTextFormat.align != TextFormatAlign.LEFT ||
+                (field.length > 0 && field.getTextFormat().align != TextFormatAlign.LEFT)) {
+                var format:TextFormat = field.defaultTextFormat;
+                format.align = TextFormatAlign.LEFT;
+                format.leftMargin = 0;
+                format.rightMargin = 0;
+                format.indent = 0;
+                field.defaultTextFormat = format;
+                field.setTextFormat(format);
+            }
+            // Ruffle does not consistently scroll embedded-font inputs after
+            // a paste or setTextFormat. Follow the actual insertion point.
             if (field.length == 0) field.scrollH = 0;
+            if (stage != null && stage.focus == field) {
+                var inputWidth:Number = field.getBounds(field).width;
+                if (chatCaret != field.caretIndex || chatText != field.text) {
+                    chatCaret = field.caretIndex;
+                    chatText = field.text;
+                    // maxScrollH includes extra trailing space in Ruffle.
+                    // Fit the real insertion point with a four-pixel gutter.
+                    chatContentScroll = Math.max(0,Math.ceil(chatTextX(field,field.length)-inputWidth+4));
+                    var caretX:Number = chatTextX(field,chatCaret);
+                    if (chatCaret == field.length) field.scrollH = chatContentScroll;
+                    else if (chatCaret == 0) field.scrollH = 0;
+                    else if (caretX > field.scrollH+inputWidth-4) field.scrollH = Math.ceil(caretX-inputWidth+4);
+                    else if (caretX < field.scrollH+2) field.scrollH = Math.max(0,Math.floor(caretX-2));
+                }
+                if (field.scrollH > chatContentScroll) field.scrollH = chatContentScroll;
+            }
         }
 
+        private function chatTextX(field:TextField, index:int):Number {
+            if (index <= 0) return 2;
+            // Read glyph coordinates without scrolling; no frame is painted
+            // while this synchronous measurement temporarily resets scrollH.
+            var previous:int = field.scrollH;
+            field.scrollH = 0;
+            var glyph:Rectangle = field.getCharBoundaries(index-1);
+            field.scrollH = previous;
+            return glyph == null ? field.textWidth+2 : glyph.right;
+        }
+
+        private var chatCaret:int = -1;
+        private var chatText:String = "";
+        private var chatContentScroll:int = 0;
         private var roomAudioManager:Object;
         private var roomAudioMuted:Boolean = false;
         private var roomAudioCompletions:int = 0;
@@ -1411,7 +1800,17 @@ package {
             if (controls == null) return null;
             var field:TextField = findNamed(findNamed(controls,"mcChat",0),"txtSpeak",0) as TextField;
             var dance:DisplayObject = findNamed(controls,"mcDanceMove",0);
+            var bounds:Rectangle = field == null ? new Rectangle() : field.getBounds(this);
             return {text:field == null ? "" : field.text,
+                x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,
+                textWidth:field == null ? 0 : field.textWidth,
+                scrollH:field == null ? 0 : field.scrollH,
+                maxScrollH:field == null ? 0 : field.maxScrollH,
+                contentScrollH:chatContentScroll,
+                caretRightGap:field == null ? 0 : field.getBounds(field).width-chatTextX(field,field.caretIndex)+field.scrollH,
+                caret:field == null ? 0 : field.caretIndex,
+                multiline:field != null && field.multiline,
+                wordWrap:field != null && field.wordWrap,
                 defaultAlign:field == null ? "" : field.defaultTextFormat.align,
                 align:field == null ? "" : field.getTextFormat().align,
                 danceVisible:dance != null && dance.visible};
@@ -1444,11 +1843,13 @@ package {
             var field:TextField = findNamed(chat, "txtSpeak", 0) as TextField;
             if (field == null) return;
             var command:String = field.text.replace(/^\s+|\s+$/g, "").toLowerCase();
-            if (command != "/exit" && command != "/help") return;
+            if (command != "" && command != "/exit" && command != "/help") return;
+            // The original ControlPanel treats an empty line as forbidden
+            // text. Consume it before its Enter/button handler validates it.
             event.preventDefault();
             event.stopImmediatePropagation();
             field.text = "";
-            ExternalInterface.call("onMogobeChatCommand", command.substr(1));
+            if (command != "") ExternalInterface.call("onMogobeChatCommand", command.substr(1));
         }
 
         private function worldChatKey(event:KeyboardEvent):void {
